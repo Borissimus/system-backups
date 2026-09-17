@@ -153,6 +153,7 @@ declare -A STEP_HINTS=(
   [restore_root]="restic restore/rsync кореня перервались (мережа, місце на диску, Ctrl+C?). Це найдовший крок. Перевірте вільне місце (df -h /mnt/target) і перезапустіть той самий командний рядок — крок повториться повністю."
   [restore_boot]="restic restore/rsync /boot перервались. Перевірте вільне місце й доступ до носія бекапу, потім перезапустіть той самий командний рядок."
   [fstab_fixup]="Виправлення /etc/fstab на цілі не вдалося — ймовірно $MNT_TARGET/etc/fstab відсутній (крок restore_root не завершився як слід). Перевірте --retry-step=restore_root."
+  [crypttab_fixup]="Не вдалося створити коректний /etc/crypttab для encrypted root. Перевірте cryptsetup luksUUID цільового LUKS-розділу та повторіть --retry-step=crypttab_fixup."
   [chroot_grub]="update-initramfs / grub-install / update-grub впали всередині chroot. Прогляньте вивід вище (типово: немає мережі для постскриптів пакетів, або невірний EFI-розділ). Перезапустіть той самий командний рядок — initramfs/grub безпечно перегенерувати ще раз."
 )
 
@@ -593,7 +594,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 10. fstab fixup
+# 10. fstab + crypttab fixup
 # ---------------------------------------------------------------------------
 
 FSTAB_CHECK="grep -qF '/dev/mapper/${VG_NAME//-/--}-${LV_NAME//-/--} / ext4 ' '$MNT_TARGET/etc/fstab'"
@@ -607,6 +608,43 @@ else
     "s|^/dev/disk/by-id/dm-uuid-LVM-.* / ext4 |/dev/mapper/${VG_NAME//-/--}-${LV_NAME//-/--} / ext4 |" \
     "$MNT_TARGET/etc/fstab"
   mark_done fstab_fixup
+  CURRENT_STEP=""
+fi
+
+# update-initramfs у chroot не може надійно визначити, що змонтована під
+# /mnt/target файлова система є коренем майбутньої ОС: /proc/mounts усе ще
+# описує Live-систему. Через це cryptsetup-initramfs може створити
+# cryptroot/crypttab усередині initramfs, але залишити його ПОРОЖНІМ — boot
+# тоді не питає LUKS-пароль і падає в BusyBox, бо root LV недоступний.
+# Явна опція "initramfs" змушує hook включити цей запис незалежно від
+# автовизначення root. UUID читаємо з фактичного цільового LUKS header, а не
+# зі старого текстового metadata-файла.
+TARGET_LUKS_UUID=$(cryptsetup luksUUID "$LUKS")
+[[ -n "$TARGET_LUKS_UUID" ]] || die "Не вдалося прочитати LUKS UUID з $LUKS"
+CRYPTTAB_CHECK="grep -Eq '^${CRYPT_NAME}[[:space:]]+UUID=${TARGET_LUKS_UUID}[[:space:]]+none[[:space:]]+.*,?initramfs(,|$)' '$MNT_TARGET/etc/crypttab'"
+if step_done_verified crypttab_fixup "$CRYPTTAB_CHECK"; then
+  log "Крок crypttab_fixup вже виконано — пропускаю"
+else
+  CURRENT_STEP=crypttab_fixup
+  log "Формування /etc/crypttab для encrypted root"
+  if [[ -f "$MNT_TARGET/etc/crypttab" ]]; then
+    [[ -f "$MNT_TARGET/etc/crypttab.pre-restore.bak" ]] || \
+      cp "$MNT_TARGET/etc/crypttab" "$MNT_TARGET/etc/crypttab.pre-restore.bak"
+  else
+    : > "$MNT_TARGET/etc/crypttab"
+  fi
+  awk -v name="$CRYPT_NAME" -v source="UUID=$TARGET_LUKS_UUID" \
+    '$1 == name || $2 == source { next } { print }' \
+    "$MNT_TARGET/etc/crypttab" > "$MNT_TARGET/etc/crypttab.restore-tmp"
+  printf '%s UUID=%s none luks,initramfs\n' "$CRYPT_NAME" "$TARGET_LUKS_UUID" \
+    >> "$MNT_TARGET/etc/crypttab.restore-tmp"
+  mv "$MNT_TARGET/etc/crypttab.restore-tmp" "$MNT_TARGET/etc/crypttab"
+  chmod 644 "$MNT_TARGET/etc/crypttab"
+  # Якщо цей новий крок додано після вже "успішного" старого restore,
+  # initramfs обов'язково треба перегенерувати, а не довіряти старому запису
+  # chroot_grub у журналі прогресу.
+  forget_from chroot_grub
+  mark_done crypttab_fixup
   CURRENT_STEP=""
 fi
 
@@ -636,8 +674,32 @@ else
       mount --bind /sys/firmware/efi/efivars "$MNT_TARGET/sys/firmware/efi/efivars"
   fi
 
-  chroot "$MNT_TARGET" /bin/bash -eux <<'CHROOT_EOF'
+  chroot "$MNT_TARGET" /usr/bin/env EXPECTED_LUKS_UUID="$TARGET_LUKS_UUID" /bin/bash -eux <<'CHROOT_EOF'
 update-initramfs -u -k all
+
+# Exit code 0 від update-initramfs недостатній: cryptsetup hook може мовчки
+# створити порожній cryptroot/crypttab. Розпаковуємо всі версійні initramfs
+# (і звичайний, і recovery entry GRUB можуть завантажити будь-який із них)
+# та перевіряємо їх фактичний вміст.
+command -v unmkinitramfs >/dev/null || {
+  echo "ПОМИЛКА: у відновленій системі немає unmkinitramfs (пакет initramfs-tools-core)" >&2
+  exit 1
+}
+mapfile -t INITRDS < <(find /boot -maxdepth 1 -type f -name 'initrd.img-*' -printf '%p\n' | sort -V)
+[[ ${#INITRDS[@]} -gt 0 ]] || { echo "Не знайдено жодного /boot/initrd.img-*" >&2; exit 1; }
+for INITRD in "${INITRDS[@]}"; do
+  VERIFY_DIR=$(mktemp -d /tmp/initramfs-verify.XXXXXX)
+  unmkinitramfs "$INITRD" "$VERIFY_DIR"
+  EMBEDDED_CRYPTTAB=$(find "$VERIFY_DIR" -path '*/cryptroot/crypttab' -type f -size +0c -print -quit)
+  if [[ -z "$EMBEDDED_CRYPTTAB" ]] || ! grep -qF "UUID=$EXPECTED_LUKS_UUID" "$EMBEDDED_CRYPTTAB"; then
+    echo "ПОМИЛКА: $INITRD не містить непорожній cryptroot/crypttab з UUID=$EXPECTED_LUKS_UUID" >&2
+    rm -rf "$VERIFY_DIR"
+    exit 1
+  fi
+  echo "OK: $INITRD містить cryptroot/crypttab з правильним LUKS UUID"
+  rm -rf "$VERIFY_DIR"
+done
+
 grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=ubuntu --recheck
 update-grub
 efibootmgr -v

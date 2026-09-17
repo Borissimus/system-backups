@@ -456,3 +456,27 @@ Live USB). Наступного разу, якщо продовжуємо в н�
 - `home_cp/` на диску бекапу — **не чіпати**, за вказівкою користувача.
 - Пароль restic-репозиторію ніде не задокументований у цих нотатках
   навмисно — його знає тільки користувач.
+
+## Перший boot упав у BusyBox без запиту LUKS-пароля (2026-09-17)
+
+Після формально успішного restore машина не показала запит LUKS-пароля і
+впала в initramfs BusyBox. Діагностика з Live USB підтвердила:
+
+- LUKS header і пароль справні, UUID контейнера
+  `cdcf5dac-5567-40ab-ab15-87c57c480f33` збігався з `/etc/crypttab`;
+- root LV, `/boot`, ESP, `fstab` і GRUB `root=` були коректні;
+- cryptsetup та LVM-бінарники/скрипти були в initramfs;
+- але файл `main/cryptroot/crypttab` усередині обох initramfs був
+  **порожній**.
+
+Причина: `update-initramfs` у chroot завершився з кодом 0, але автоматичне
+визначення encrypted root не спрацювало в оточенні Live-системи. Після
+явного запису
+`cryptroot UUID=<LUKS_UUID> none luks,initramfs` і повторного
+`update-initramfs -u -k all` embedded crypttab заповнився, запит пароля
+з'явився і система успішно завантажилася.
+
+`restore-system.sh` допрацьовано: він формує цей запис із UUID фактичного
+цільового LUKS header, інвалідує старий `chroot_grub`, а після генерації
+розпаковує кожен версійний initramfs і завершується помилкою, якщо embedded
+`cryptroot/crypttab` порожній або не містить правильного UUID.
