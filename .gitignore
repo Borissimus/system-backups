@@ -1,0 +1,5 @@
+.restic-restore-tmp/
+.restore-cache
+.restore-progress
+recovery-metadata/
+restic/
