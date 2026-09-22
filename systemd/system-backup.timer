@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the system backup every evening at 20:00
+
+[Timer]
+OnCalendar=*-*-* 20:00:00
+# A missed evening backup must not unexpectedly run the next morning.
+Persistent=false
+AccuracySec=1min
+Unit=system-backup.service
+
+[Install]
+WantedBy=timers.target

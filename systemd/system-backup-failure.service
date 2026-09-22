@@ -1,0 +1,6 @@
+[Unit]
+Description=Create a shell notice after system-backup.service fails
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/system-backup/failure-notice
