@@ -3,3 +3,5 @@
 .restore-progress
 recovery-metadata/
 restic/
+.backup.lock
+backup-history.log

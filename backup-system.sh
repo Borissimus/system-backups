@@ -23,6 +23,12 @@
 #
 set -euo pipefail
 
+# flock використовує додатковий FD, а LVM за замовчуванням попереджає про
+# будь-який успадкований нестандартний FD. Це штатна ситуація для скрипта;
+# lock лишається активним, а діагностичний шум прибираємо документованою
+# змінною LVM.
+export LVM_SUPPRESS_FD_WARNINGS=1
+
 if [[ $EUID -ne 0 ]]; then
   exec sudo -E bash "$0" "$@"
 fi
@@ -44,7 +50,7 @@ for arg in "$@"; do
 done
 
 SNAP_MOUNT=/mnt/root-backup-snapshot
-SNAP_LV_NAME=root-backup-snapshot
+SNAP_LV_NAME=""
 KEEP_DAILY=${KEEP_DAILY:-7}
 KEEP_WEEKLY=${KEEP_WEEKLY:-4}
 KEEP_MONTHLY=${KEEP_MONTHLY:-6}
@@ -121,6 +127,16 @@ if ! flock -n 200; then
   exit 0
 fi
 
+# Унікальне ім'я не перетинається зі старим ручним snapshot'ом і дає змогу
+# безпечно відмовитися від запуску після аварійного вимкнення замість
+# автоматичного видалення чужого LV.
+RUN_TAG="run-$(date +%Y%m%d-%H%M%S)"
+SNAP_LV_NAME="root-backup-snapshot-${RUN_TAG#run-}"
+# Ім'я LV має бути унікальним, але mount path — сталим: restic використовує
+# шлях разом з hostname, щоб знайти parent snapshot і не читати незмінені
+# файли повторно. Старий LV з іменем root-backup-snapshot не зачіпається.
+SNAP_MOUNT="/mnt/root-backup-snapshot"
+
 CURRENT_STEP="verify_repo"
 [[ -d "$REPO" && -f "$REPO/config" ]] || die "Не знайдено restic репозиторій: $REPO"
 
@@ -177,11 +193,13 @@ print(int(min(free-1, want)))
 [[ $SNAP_SIZE_G -ge 5 ]] || die "Недостатньо вільного місця у VG для snapshot (вільно ${VG_FREE_G}G, потрібно мінімум 5G)"
 echo "VG вільно: ${VG_FREE_G}G, LV: ${LV_SIZE_G}G -> snapshot: ${SNAP_SIZE_G}G"
 
-if lvs "$VG_NAME/$SNAP_LV_NAME" >/dev/null 2>&1; then
-  echo "Знайдено старий $SNAP_LV_NAME від попереднього невдалого запуску — видаляю"
-  umount "$SNAP_MOUNT" 2>/dev/null || true
-  lvremove -f "$VG_NAME/$SNAP_LV_NAME"
-fi
+# Після аварійного вимкнення попередній унікальний snapshot може лишитися.
+# Не видаляємо його автоматично: це може бути єдина консистентна копія даних,
+# яку ще не встигли залити в restic. Оператор має спершу оглянути його.
+STALE_SNAPSHOTS=$(lvs --noheadings -o lv_name "$VG_NAME" 2>/dev/null \
+  | awk '/^ *root-backup-snapshot-[0-9]{8}-[0-9]{6} *$/ {print $1}')
+[[ -z "$STALE_SNAPSHOTS" ]] || die \
+  "Знайдено snapshot від перерваного запуску: $STALE_SNAPSHOTS. Перевірте його вручну перед новим backup."
 
 # ---------------------------------------------------------------------------
 # 3. Restic password
@@ -243,8 +261,6 @@ mount -o ro "/dev/$VG_NAME/$SNAP_LV_NAME" "$SNAP_MOUNT"
 # 6. Restic backup — root, boot, metadata in one run
 # ---------------------------------------------------------------------------
 
-RUN_TAG="run-$(date +%Y%m%d-%H%M%S)"
-
 CURRENT_STEP="backup_root"
 log "restic backup: system-root ($SNAP_MOUNT) — без живого прогресу (--json), може виглядати як пауза"
 ROOT_JSON=$(mktemp); TMP_JSON_FILES+=("$ROOT_JSON")
@@ -253,9 +269,10 @@ read -r ROOT_ADDED ROOT_FILES_NEW ROOT_FILES_CHANGED ROOT_SNAPID < <(summarize_b
 echo "system-root: +$(human_bytes "$ROOT_ADDED") нових даних, нових/змінених файлів: $ROOT_FILES_NEW/$ROOT_FILES_CHANGED, snapshot $ROOT_SNAPID"
 
 CURRENT_STEP="backup_boot"
-log "restic backup: system-boot (/boot, /boot/efi)"
+log "restic backup: system-boot (/boot і /boot/efi окремими файловими системами)"
 BOOT_JSON=$(mktemp); TMP_JSON_FILES+=("$BOOT_JSON")
-restic -r "$REPO" backup /boot --tag system-boot --tag "$RUN_TAG" --json > "$BOOT_JSON"
+restic -r "$REPO" backup /boot /boot/efi --one-file-system \
+  --tag system-boot --tag "$RUN_TAG" --json > "$BOOT_JSON"
 read -r BOOT_ADDED BOOT_FILES_NEW BOOT_FILES_CHANGED BOOT_SNAPID < <(summarize_backup "$BOOT_JSON")
 echo "system-boot: +$(human_bytes "$BOOT_ADDED") нових даних, нових/змінених файлів: $BOOT_FILES_NEW/$BOOT_FILES_CHANGED, snapshot $BOOT_SNAPID"
 
