@@ -25,12 +25,21 @@ tmp=$(mktemp "$STATE_DIR/.failure-notice.XXXXXX")
   echo "  sudo systemctl status system-backup.service --no-pager"
   echo "Журнал служби:"
   echo "  sudo journalctl -u system-backup.service -e --no-pager"
-  echo "Журнал backup:"
-  echo "  tail -n 20 $backup_dir/backup-history.log"
+  echo
+  echo "Останні рядки systemd journal (доступні без backup-диску):"
+  journalctl -u system-backup.service -n 16 --no-pager --output=short-iso 2>&1 || \
+    echo "  Не вдалося прочитати journal. Див. команду вище."
+  echo
   if [[ -r "$backup_dir/backup-history.log" ]]; then
+    echo "Журнал backup:"
+    echo "  tail -n 20 $backup_dir/backup-history.log"
     echo
     echo "Останній запис:"
     tail -n 1 "$backup_dir/backup-history.log"
+  else
+    echo "backup-history.log недоступний: backup-диск не змонтований або шлях відсутній."
+    echo "Після повернення диска:"
+    echo "  tail -n 20 $backup_dir/backup-history.log"
   fi
   echo
   echo "Після перегляду приберіть це повідомлення:"

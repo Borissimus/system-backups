@@ -34,7 +34,9 @@ scripts/system-backupctl.sh timer
 
 Якщо service падає, на наступному інтерактивному Bash запускається лише
 універсальний source-hook з `~/.bashrc`; він друкує динамічно створений
-`failure-notice`. Після перегляду:
+`failure-notice`. Notice містить останні рядки systemd journal, тому причина
+помилки доступна навіть коли сам backup-диск від'єднаний і
+`backup-history.log` прочитати неможливо. Після перегляду:
 
 ```bash
 scripts/system-backupctl.sh acknowledge
