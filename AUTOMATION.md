@@ -41,3 +41,17 @@ scripts/system-backupctl.sh timer
 ```bash
 scripts/system-backupctl.sh acknowledge
 ```
+
+## Монтування backup-диска
+
+Backup-диск має монтуватися systemd через `/etc/fstab`, а не лише через
+файловий менеджер (udisks). Використовуйте UUID, а не нестабільне ім'я
+`/dev/sdX`, і `nofail`, щоб навмисно від'єднаний диск не затримував boot:
+
+```fstab
+UUID=<UUID_BACKUP_DISK> /media/borys/backup_img ext4 defaults,nosuid,nodev,nofail,x-systemd.device-timeout=10s,x-systemd.mount-timeout=30s 0 2
+```
+
+`system-backup.service` має `RequiresMountsFor=/media/borys/backup_img`.
+Тому якщо диск підключили вже після boot, service все одно спробує змонтувати
+його перед backup; якщо диска немає, спрацює звичайний failure-notice.
