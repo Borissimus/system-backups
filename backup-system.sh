@@ -301,7 +301,12 @@ if [[ $PRUNE -eq 1 ]]; then
   CURRENT_STEP="prune"
   log "Застосування retention policy (daily=$KEEP_DAILY weekly=$KEEP_WEEKLY monthly=$KEEP_MONTHLY)"
   for tag in system-root system-boot recovery-metadata; do
+    # Кожен тип backup уже відфільтрований власним сталим тегом. Групуємо
+    # лише за host, щоб одноразова зміна mount path (наприклад, тестовий
+    # snapshot) не створила окрему групу, яку restic мусить зберігати як
+    # її єдиний "oldest" snapshot назавжди.
     restic -r "$REPO" forget --tag "$tag" \
+      --group-by host \
       --keep-daily "$KEEP_DAILY" --keep-weekly "$KEEP_WEEKLY" --keep-monthly "$KEEP_MONTHLY"
   done
   restic -r "$REPO" prune

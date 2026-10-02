@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Root-only wrapper run by system-backup.service. It keeps policy and failure
+# semantics outside backup-system.sh, so the latter stays usable manually.
+set -euo pipefail
+
+CONFIG=/etc/system-backup/system-backup.conf
+STATE_DIR=/var/lib/system-backup
+CACHE_DIR=/var/cache/system-backup/restic
+
+fail() {
+  echo "system-backup: ПОМИЛКА: $*" >&2
+  exit 1
+}
+
+[[ $EUID -eq 0 ]] || fail "цей wrapper має працювати лише від root"
+[[ -r "$CONFIG" ]] || fail "відсутній конфіг $CONFIG; запустіть installer"
+# shellcheck disable=SC1090
+source "$CONFIG"
+
+: "${BACKUP_DIR:?BACKUP_DIR не задано}"
+: "${RESTIC_PASSWORD_FILE:?RESTIC_PASSWORD_FILE не задано}"
+: "${KEEP_DAILY:?KEEP_DAILY не задано}"
+: "${KEEP_WEEKLY:?KEEP_WEEKLY не задано}"
+: "${KEEP_MONTHLY:?KEEP_MONTHLY не задано}"
+: "${MIN_REPOSITORY_FREE_GIB:?MIN_REPOSITORY_FREE_GIB не задано}"
+: "${SUCCESS_CALLBACK:?SUCCESS_CALLBACK не задано}"
+
+[[ -x "$BACKUP_DIR/backup-system.sh" ]] || fail "не знайдено $BACKUP_DIR/backup-system.sh"
+[[ -d "$BACKUP_DIR/restic" && -f "$BACKUP_DIR/restic/config" ]] || \
+  fail "Restic repository недоступний у $BACKUP_DIR/restic (backup-диск не змонтовано?)"
+[[ -r "$RESTIC_PASSWORD_FILE" ]] || fail "файл пароля недоступний: $RESTIC_PASSWORD_FILE"
+
+available_bytes=$(df --output=avail -B1 "$BACKUP_DIR" | awk 'NR==2 {print $1}')
+[[ "$available_bytes" =~ ^[0-9]+$ ]] || fail "не вдалося визначити вільне місце для $BACKUP_DIR"
+minimum_bytes=$(( MIN_REPOSITORY_FREE_GIB * 1024 * 1024 * 1024 ))
+(( available_bytes >= minimum_bytes )) || \
+  fail "на backup-диску менше ${MIN_REPOSITORY_FREE_GIB} GiB вільного місця"
+
+mkdir -p "$STATE_DIR"
+# systemd services intentionally have no $HOME. Give restic a persistent,
+# root-only cache instead of falling back to a warning and a temporary cache.
+install -d -m 0700 "$CACHE_DIR"
+export XDG_CACHE_HOME="$CACHE_DIR"
+echo "system-backup: запускаю backup + retention (daily=$KEEP_DAILY weekly=$KEEP_WEEKLY monthly=$KEEP_MONTHLY)"
+
+export RESTIC_PASSWORD_FILE KEEP_DAILY KEEP_WEEKLY KEEP_MONTHLY
+"$BACKUP_DIR/backup-system.sh" --prune
+
+# backup-system.sh intentionally returns 0 for a concurrent-run skip. Only a
+# recorded success is allowed to invoke the callback; a skip must never lead
+# to a future automatic suspend either.
+history="$BACKUP_DIR/backup-history.log"
+[[ -r "$history" ]] || fail "backup завершився без доступного журналу $history"
+last_record=$(tail -n 1 "$history")
+case " $last_record " in
+  *" status=success "*)
+    echo "system-backup: backup успішний; викликаю after-success callback"
+    [[ -x "$SUCCESS_CALLBACK" ]] || fail "callback не виконуваний: $SUCCESS_CALLBACK"
+    "$SUCCESS_CALLBACK"
+    # Suspend/WOL deliberately do not live here yet. They will be added only
+    # after explicit hardware testing and a separate reviewed change.
+    echo "system-backup: сон після backup наразі навмисно вимкнено"
+    ;;
+  *" status=skipped "*)
+    echo "system-backup: запуск пропущено через активний backup; callback не викликаю"
+    ;;
+  *)
+    fail "останній рядок backup-history.log не підтверджує success/skip: $last_record"
+    ;;
+esac
