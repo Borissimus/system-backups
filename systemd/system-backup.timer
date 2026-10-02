@@ -1,5 +1,5 @@
 [Unit]
-Description=Run the system backup every evening at 20:00
+Description=Run the system backup daily (time configured by installer)
 
 [Timer]
 OnCalendar=*-*-* 20:00:00

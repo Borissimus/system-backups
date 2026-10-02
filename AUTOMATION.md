@@ -1,13 +1,14 @@
 # Systemd automation (work in progress)
 
-Ця гілка додає автономний щовечірній запуск backup о 20:00. Сон машини,
+Ця гілка додає автономний щоденний запуск backup (типово о 20:00). Сон машини,
 Wake-on-LAN і BIOS RTC **навмисно не реалізовані**: їх буде додано лише після
 окремого тесту апаратного пробудження.
 
 ## Компоненти
 
 - `system-backup.service` запускає `backup-system.sh --prune` під root.
-- `system-backup.timer` запускає його о 20:00 і не надолужує пропущений час.
+- `system-backup.timer` запускає його в час із `service.json` і не надолужує
+  пропущений час.
 - `system-backup-failure.service` створює `/var/lib/system-backup/failure-notice`.
 - `scripts/system-backup-after-success.sh` — безпечна callback-заглушка.
 - `scripts/system-backupctl.sh` — інсталяція, ручний запуск і контроль.
@@ -27,7 +28,8 @@ scripts/system-backupctl.sh enable
 scripts/system-backupctl.sh timer
 ```
 
-Політика retention задається в `/etc/system-backup/system-backup.conf`:
+Політика retention, час, UUID/mount backup-диска та шлях до профілю задаються
+в `/etc/system-backup/service.json`:
 7 щоденних, 4 тижневих і 6 місячних snapshots. Після кожного backup
 виконується `prune`, який звільняє тільки дані, не потрібні жодному
 збереженому snapshot.
@@ -49,9 +51,9 @@ Backup-диск має монтуватися systemd через `/etc/fstab`, �
 `/dev/sdX`, і `nofail`, щоб навмисно від'єднаний диск не затримував boot:
 
 ```fstab
-UUID=<UUID_BACKUP_DISK> /media/borys/backup_img ext4 defaults,nosuid,nodev,nofail,x-systemd.device-timeout=10s,x-systemd.mount-timeout=30s 0 2
+UUID=<UUID_З_service.json> <backup_mount_З_service.json> ext4 defaults,nosuid,nodev,nofail,x-systemd.device-timeout=10s,x-systemd.mount-timeout=30s 0 2
 ```
 
-`system-backup.service` має `RequiresMountsFor=/media/borys/backup_img`.
+Інсталятор генерує `RequiresMountsFor` з `backup_mount` у JSON.
 Тому якщо диск підключили вже після boot, service все одно спробує змонтувати
 його перед backup; якщо диска немає, спрацює звичайний failure-notice.

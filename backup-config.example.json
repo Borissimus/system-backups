@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "root": {
+    "snapshot_mode": "auto"
+  },
+  "encryption": {
+    "mode": "auto"
+  },
+  "boot": {
+    "mode": "auto"
+  },
+  "home": {
+    "mode": "auto",
+    "path": "/home",
+    "snapshot_mode": "live"
+  }
+}

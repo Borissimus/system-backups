@@ -3,7 +3,8 @@
 # semantics outside backup-system.sh, so the latter stays usable manually.
 set -euo pipefail
 
-CONFIG=/etc/system-backup/system-backup.conf
+CONFIG=/etc/system-backup/service.json
+CONFIG_HELPER=/usr/local/lib/system-backup/service-config.py
 STATE_DIR=/var/lib/system-backup
 CACHE_DIR=/var/cache/system-backup/restic
 
@@ -14,10 +15,20 @@ fail() {
 
 [[ $EUID -eq 0 ]] || fail "цей wrapper має працювати лише від root"
 [[ -r "$CONFIG" ]] || fail "відсутній конфіг $CONFIG; запустіть installer"
-# shellcheck disable=SC1090
-source "$CONFIG"
+[[ -x "$CONFIG_HELPER" ]] || fail "відсутній config helper $CONFIG_HELPER; запустіть installer"
+
+while IFS=$'\t' read -r key value; do
+  case "$key" in
+    BACKUP_DIR|BACKUP_MOUNT|BACKUP_DISK_UUID|BACKUP_PROFILE|SCHEDULE|KEEP_DAILY|KEEP_WEEKLY|KEEP_MONTHLY|MIN_REPOSITORY_FREE_GIB|RESTIC_PASSWORD_FILE|SUCCESS_CALLBACK|NOTICE_USER)
+      printf -v "$key" '%s' "$value"
+      ;;
+    *) fail "невідомий ключ від service config helper: $key" ;;
+  esac
+done < <(python3 "$CONFIG_HELPER" export --config "$CONFIG")
 
 : "${BACKUP_DIR:?BACKUP_DIR не задано}"
+: "${BACKUP_MOUNT:?BACKUP_MOUNT не задано}"
+: "${BACKUP_DISK_UUID:?BACKUP_DISK_UUID не задано}"
 : "${RESTIC_PASSWORD_FILE:?RESTIC_PASSWORD_FILE не задано}"
 : "${KEEP_DAILY:?KEEP_DAILY не задано}"
 : "${KEEP_WEEKLY:?KEEP_WEEKLY не задано}"
@@ -25,6 +36,14 @@ source "$CONFIG"
 : "${MIN_REPOSITORY_FREE_GIB:?MIN_REPOSITORY_FREE_GIB не задано}"
 : "${SUCCESS_CALLBACK:?SUCCESS_CALLBACK не задано}"
 
+mountpoint -q "$BACKUP_MOUNT" || fail "backup-диск не змонтовано у $BACKUP_MOUNT"
+mounted_source=$(findmnt -no SOURCE --target "$BACKUP_MOUNT") || fail "не вдалося визначити source mount $BACKUP_MOUNT"
+mounted_uuid=$(blkid -s UUID -o value "$mounted_source" 2>/dev/null || true)
+[[ "$mounted_uuid" == "$BACKUP_DISK_UUID" ]] || \
+  fail "у $BACKUP_MOUNT змонтовано не очікуваний диск (UUID=${mounted_uuid:-невідомий}, очікувався $BACKUP_DISK_UUID)"
+backup_mount_actual=$(findmnt -no TARGET --target "$BACKUP_DIR" 2>/dev/null || true)
+[[ "$backup_mount_actual" == "$BACKUP_MOUNT" ]] || \
+  fail "BACKUP_DIR=$BACKUP_DIR не лежить на очікуваному mount $BACKUP_MOUNT"
 [[ -x "$BACKUP_DIR/backup-system.sh" ]] || fail "не знайдено $BACKUP_DIR/backup-system.sh"
 [[ -d "$BACKUP_DIR/restic" && -f "$BACKUP_DIR/restic/config" ]] || \
   fail "Restic repository недоступний у $BACKUP_DIR/restic (backup-диск не змонтовано?)"
@@ -44,7 +63,12 @@ export XDG_CACHE_HOME="$CACHE_DIR"
 echo "system-backup: запускаю backup + retention (daily=$KEEP_DAILY weekly=$KEEP_WEEKLY monthly=$KEEP_MONTHLY)"
 
 export RESTIC_PASSWORD_FILE KEEP_DAILY KEEP_WEEKLY KEEP_MONTHLY
-"$BACKUP_DIR/backup-system.sh" --prune
+backup_args=(--prune)
+if [[ -n "$BACKUP_PROFILE" ]]; then
+  [[ -r "$BACKUP_PROFILE" ]] || fail "backup profile недоступний: $BACKUP_PROFILE"
+  backup_args+=(--config "$BACKUP_PROFILE")
+fi
+"$BACKUP_DIR/backup-system.sh" "${backup_args[@]}"
 
 # backup-system.sh intentionally returns 0 for a concurrent-run skip. Only a
 # recorded success is allowed to invoke the callback; a skip must never lead

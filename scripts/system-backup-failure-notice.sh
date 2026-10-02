@@ -3,17 +3,18 @@
 # by the desktop user and survives reboots until it is acknowledged.
 set -euo pipefail
 
-CONFIG=/etc/system-backup/system-backup.conf
+CONFIG=/etc/system-backup/service.json
+CONFIG_HELPER=/usr/local/lib/system-backup/service-config.py
 STATE_DIR=/var/lib/system-backup
 NOTICE="$STATE_DIR/failure-notice"
 
 mkdir -p -m 0755 "$STATE_DIR"
 
 backup_dir="(конфіг ще не доступний)"
-if [[ -r "$CONFIG" ]]; then
-  # shellcheck disable=SC1090
-  source "$CONFIG"
-  backup_dir="${BACKUP_DIR:-$backup_dir}"
+if [[ -r "$CONFIG" && -x "$CONFIG_HELPER" ]]; then
+  while IFS=$'\t' read -r key value; do
+    [[ "$key" == BACKUP_DIR ]] && backup_dir="$value"
+  done < <(python3 "$CONFIG_HELPER" export --config "$CONFIG" 2>/dev/null || true)
 fi
 
 tmp=$(mktemp "$STATE_DIR/.failure-notice.XXXXXX")

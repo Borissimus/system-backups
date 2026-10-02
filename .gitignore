@@ -5,3 +5,5 @@ recovery-metadata/
 restic/
 .backup.lock
 backup-history.log
+backup-config.json
+service-config.json

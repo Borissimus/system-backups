@@ -11,7 +11,7 @@ Usage: scripts/system-backupctl.sh COMMAND
 
 Commands:
   install       Install/update files; timer stays disabled
-  enable        Enable and start the daily 20:00 timer
+  enable        Enable and start the configured daily timer
   disable       Disable and stop the timer
   run           Start one backup service now; follow it with `logs`
   status        Show service, timer, and unresolved failure notice

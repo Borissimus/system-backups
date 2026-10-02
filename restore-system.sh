@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 #
 # restore-system.sh — full system restore from the restic repository in this
-# directory (system-backups/) onto a target disk, following the "512 GB test
-# scenario" procedure from RECOVERY.md, generalized to any target disk size.
+# directory (system-backups/) onto a target disk. This implementation supports
+# the verified LVM-on-LUKS UEFI profile; backup-system.sh records other
+# topologies too, but their destructive restore procedure is intentionally not
+# guessed by this script.
 #
 # Run from a UEFI Ubuntu Live USB with the backup medium mounted (this script
 # must live inside system-backups/ next to restic/ and recovery-metadata/).
@@ -184,6 +186,16 @@ trap cleanup EXIT
 log "Перевірка структури бекапу в $SCRIPT_DIR"
 [[ -d "$REPO" ]] || die "Не знайдено restic репозиторій: $REPO"
 [[ -f "$REPO/config" ]] || die "У $REPO немає config — це не restic репозиторій"
+if [[ -f "$META/layout.json" ]]; then
+  recovery_profile=$(python3 - "$META/layout.json" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as f:
+    print(json.load(f).get("profile", {}).get("recovery_profile", "unknown"))
+PY
+)
+  [[ "$recovery_profile" == lvm-luks-uefi ]] || die \
+    "layout.json описує profile=$recovery_profile. Цей restore-system.sh поки що реалізує лише lvm-luks-uefi; не починаю руйнівне відновлення за припущеннями."
+fi
 for f in blkid.txt nvme0n1.sfdisk nvme0n1p3-luks-header.img; do
   [[ -e "$META/$f" ]] || die "Відсутній файл метаданих: $META/$f"
 done
