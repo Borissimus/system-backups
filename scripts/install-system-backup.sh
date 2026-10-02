@@ -159,6 +159,9 @@ fi
 target_user=${notice_user:-${SUDO_USER:-}}
 if [[ -n "$target_user" && "$target_user" != root ]]; then
   target_home=$(getent passwd "$target_user" | cut -d: -f6)
+  [[ -n "$target_home" ]] || {
+    echo "Користувача для notice_user не знайдено: $target_user" >&2; exit 1;
+  }
   target_bashrc="$target_home/.bashrc"
   target_notice_dir="$target_home/.config/system-backup"
   install -d -m 0755 -o "$target_user" -g "$(id -gn "$target_user")" "$target_notice_dir"

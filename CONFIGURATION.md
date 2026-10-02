@@ -100,6 +100,15 @@ system-backupctl timer
 timer. Сам backup-диск все одно має бути описаний у `/etc/fstab` через UUID
 і `nofail`.
 
+Не копіюйте `service-config.example.json` без редагування: замініть усі
+`USER`, mount path і `PUT-BACKUP-DISK-UUID-HERE`, потім перевірте файл:
+
+```bash
+cp service-config.example.json service-config.json
+# відредагуйте service-config.json для конкретної машини
+python3 scripts/service-config.py validate --config service-config.json
+```
+
 ## Межа поточної реалізації restore
 
 `backup-system.sh` уже збирає metadata для LVM/LUKS і простіших схем. Проте

@@ -16,17 +16,25 @@ Wake-on-LAN і BIOS RTC **навмисно не реалізовані**: їх �
 ## Порядок безпечного ввімкнення
 
 ```bash
-# 1. Встановити файли і root-only пароль, але не вмикати таймер
+# 0. Backup-диск вже змонтований через /etc/fstab за UUID (див. нижче).
+#    За потреби відредагуйте backup-config.json перед install.
+
+# 1. Встановити файли і root-only пароль, але не вмикати timer.
+#    Якщо service-config.json ще немає, installer сам збере mount і UUID.
 scripts/system-backupctl.sh install
 
 # 2. Виконати один запуск як service та оглянути журнал
 scripts/system-backupctl.sh run
 scripts/system-backupctl.sh logs
 
-# 3. Лише після успіху ввімкнути щовечірній timer
+# 3. Лише після успіху ввімкнути timer
 scripts/system-backupctl.sh enable
 scripts/system-backupctl.sh timer
 ```
+
+Після зміни `/etc/system-backup/service.json` знову виконайте
+`scripts/system-backupctl.sh install`: він збереже JSON і пароль, але
+перегенерує systemd settings для mount та часу запуску.
 
 Політика retention, час, UUID/mount backup-диска та шлях до профілю задаються
 в `/etc/system-backup/service.json`:
@@ -51,7 +59,7 @@ Backup-диск має монтуватися systemd через `/etc/fstab`, �
 `/dev/sdX`, і `nofail`, щоб навмисно від'єднаний диск не затримував boot:
 
 ```fstab
-UUID=<UUID_З_service.json> <backup_mount_З_service.json> ext4 defaults,nosuid,nodev,nofail,x-systemd.device-timeout=10s,x-systemd.mount-timeout=30s 0 2
+UUID=<backup_disk_uuid> <backup_mount> ext4 defaults,nosuid,nodev,nofail,x-systemd.device-timeout=10s,x-systemd.mount-timeout=30s 0 2
 ```
 
 Інсталятор генерує `RequiresMountsFor` з `backup_mount` у JSON.

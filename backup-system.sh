@@ -575,7 +575,11 @@ if [[ $PRUNE -eq 1 ]]; then
       --group-by host \
       --keep-daily "$KEEP_DAILY" --keep-weekly "$KEEP_WEEKLY" --keep-monthly "$KEEP_MONTHLY"
   done
-  if [[ "$HOME_MODE" == restic ]]; then
+  # A machine may later switch a separate /home from restic to external or
+  # exclude. Retain and eventually prune its already-created system-home
+  # snapshots too; otherwise they would be orphaned from the retention policy.
+  HOME_SNAPSHOT_COUNT=$(restic -r "$REPO" snapshots --tag system-home --json | python3 -c 'import json, sys; print(len(json.load(sys.stdin)))')
+  if [[ "$HOME_SNAPSHOT_COUNT" -gt 0 ]]; then
     restic -r "$REPO" forget --tag system-home \
       --group-by host \
       --keep-daily "$KEEP_DAILY" --keep-weekly "$KEEP_WEEKLY" --keep-monthly "$KEEP_MONTHLY"

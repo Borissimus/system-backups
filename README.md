@@ -33,17 +33,17 @@ USB — для цього є `restore-system.sh`). За один прогін:
 2. Рахує безпечний розмір тимчасового LVM-снепшоту
    (`min(вільне у VG − 1G, 20% розміру LV)`, мінімум 5G, інакше — явна
    помилка з поясненням, скільки бракує).
-3. Оновлює `recovery-metadata/` (GPT, sfdisk, blkid, LVM-конфіг, LUKS
-   header) — щоб `restore-system.sh` завжди мав актуальні дані, а не
-   знімок з дня першого бекапу.
-4. Створює LVM-снепшот кореня з унікальним іменем
+3. Оновлює `recovery-metadata/` (GPT, sfdisk, blkid, а за потреби LVM-конфіг,
+   LUKS header і metadata фізично окремого home-диска) — щоб recovery мав
+   актуальні дані, а не знімок з дня першого бекапу.
+4. Якщо root — LVM і профіль не вимагає `live`, створює LVM-снепшот кореня з унікальним іменем
    `root-backup-snapshot-YYYYMMDD-HHMMSS` — **консистентна точка в часі**,
    не повна копія; монтує його read-only у сталий шлях
    `/mnt/root-backup-snapshot`.
-5. Трьома викликами `restic backup` заливає корінь, `/boot` і свіжі
-   `recovery-metadata` в той самий репозиторій з тегами
-   `system-root` / `system-boot` / `recovery-metadata` + унікальний
-   `run-<timestamp>` на кожен прогін.
+5. Викликами `restic backup` заливає корінь, `/boot`, свіжі
+   `recovery-metadata` і, якщо профіль так задає, окремий `/home`. Типи
+   мають теги `system-root` / `system-boot` / `recovery-metadata` /
+   `system-home` плюс унікальний `run-<timestamp>` на кожен прогін.
 6. Прибирає снепшот, опційно застосовує retention (`--prune`), робить
    швидку перевірку репозиторію (`restic check`, без читання даних).
 
@@ -79,10 +79,14 @@ restic-кроку на реальній системі (див. `CLAUDE-SESSION-
 ## 3. Використання
 
 ```bash
-sudo bash backup-system.sh --dry-run   # перевірити все, нічого не бекапити
-sudo bash backup-system.sh             # реальний бекап
-sudo bash backup-system.sh --prune     # бекап + застосувати retention одразу після
+sudo bash backup-system.sh --config backup-config.json --print-plan  # без пароля й записів
+sudo bash backup-system.sh --config backup-config.json --dry-run     # перевірити repo/пароль, без backup
+sudo bash backup-system.sh --config backup-config.json               # реальний backup
+sudo bash backup-system.sh --config backup-config.json --prune       # backup + retention
 ```
+
+Якщо `--config` не передано, використовується вбудований безпечний профіль
+`auto`. Значення й обмеження всіх режимів — у `CONFIGURATION.md`.
 
 ### Змінні середовища
 
@@ -135,25 +139,24 @@ sudo bash backup-system.sh --prune     # бекап + застосувати ret
 
 **Додаткові поля за статусом:**
 
-- `success`: `root_added`, `boot_added`, `meta_added`, `total_added`
-  (усі — байти, ще НЕ додано вручну), `root_snapshot`, `boot_snapshot`,
-  `meta_snapshot` (restic snapshot id кожного з трьох), `pruned`
-  (`yes`/`no`).
+- `success`: `root_added`, `home_added`, `boot_added`, `meta_added`,
+  `total_added` (усі — байти), `root_snapshot`, `home_snapshot`,
+  `boot_snapshot`, `meta_snapshot`, `home_mode` і `pruned` (`yes`/`no`).
 - `failed`: `exit_code`.
 - `skipped`: `reason=already_running`.
 
 Приклади:
 
 ```
-ts=2026-09-17T06:15:32+03:00 tag=run-20260917-061532 status=success duration_s=142 step=done root_added=47185920 boot_added=2048 meta_added=8192 total_added=47196160 root_snapshot=abcd1234 boot_snapshot=ef567890 meta_snapshot=12ab34cd pruned=no
+ts=2026-09-17T06:15:32+03:00 tag=run-20260917-061532 status=success duration_s=142 step=done root_added=47185920 home_added=0 boot_added=2048 meta_added=8192 total_added=47196160 root_snapshot=abcd1234 home_snapshot=- boot_snapshot=ef567890 meta_snapshot=12ab34cd home_mode=auto pruned=no
 ts=2026-09-18T03:00:05+03:00 tag=- status=skipped duration_s=0 step=verify_repo reason=already_running
 ts=2026-09-19T03:00:12+03:00 tag=run-20260919-030012 status=failed duration_s=18 step=create_snapshot exit_code=1
 ```
 
 **Кроки (`step`), які можуть з'явитись у `failed`-рядку:** `verify_repo`,
-`detect_lvm`, `snapshot_sizing`, `restic_password`, `refresh_metadata`,
-`create_snapshot`, `backup_root`, `backup_boot`, `backup_metadata`,
-`remove_snapshot`, `prune`, `check_repo`.
+`detect_layout`, `snapshot_sizing`, `restic_password`, `refresh_metadata`,
+`create_snapshot`, `backup_root`, `backup_home`, `backup_boot`,
+`backup_metadata`, `remove_snapshot`, `prune`, `check_repo`.
 
 Швидкі корисні запити для майбутнього сервісу/моніторингу:
 
@@ -168,85 +171,31 @@ grep 'status=success' backup-history.log | tail -1
 awk -v since="$(date -d '7 days ago' -Iseconds)" '$1 > "ts="since' backup-history.log | grep -c 'status=failed'
 ```
 
-## 6. Автономний запуск (для майбутнього сервісу)
+## 6. Автономний запуск через systemd
 
-Це розділ саме під план "окремий сервіс, щоб система все робила сама".
-Ключові моменти, які треба врахувати:
+Робоча служба, таймер, root-only пароль і failure notice вже реалізовані.
+На новій машині дійте в такому порядку:
 
-### 6.1 Пароль — головний блокер автономності
+1. Змонтуйте backup-диск через `/etc/fstab` за UUID з `nofail` (приклад у
+   `AUTOMATION.md`) і переконайтеся, що каталог репозиторію доступний.
+2. За потреби налаштуйте `backup-config.json` для topology root/LUKS/`/home`.
+   Перед інсталяцією можна також підготувати `service-config.json`; інакше
+   installer виявить mount та UUID сам.
+3. Запустіть `scripts/system-backupctl.sh install`. Він встановить служби,
+   створить/збереже root-only файл пароля і залишить timer вимкненим.
+4. Перевірте один запуск: `scripts/system-backupctl.sh run`, потім
+   `scripts/system-backupctl.sh logs`.
+5. Лише після успіху виконайте `scripts/system-backupctl.sh enable`.
 
-`read -rs` в терміналі несумісний з systemd-таймером. **Рекомендований
-підхід:**
+Timer не надолужує пропущений вечірній запуск (`Persistent=false`), а
+`OnFailure=` створює повідомлення для наступної інтерактивної Bash-сесії.
+Служба відрізняє очікуваний backup-диск за UUID і не запускає backup у
+порожній локальній директорії. Команди контролю та подробиці — у
+`AUTOMATION.md` і `CONFIGURATION.md`.
 
-```bash
-# Один раз, вручну, з правами root:
-install -m 600 -o root -g root /dev/stdin /etc/restic-backup.pass <<< "той-самий-пароль-restic"
-```
-
-І в systemd unit — `RESTIC_PASSWORD_FILE=/etc/restic-backup.pass` через
-`EnvironmentFile=` або напряму в `[Service] Environment=`. **Не** класти
-пароль просто текстом у `Environment=` в unit-файлі — він тоді видний
-через `systemctl show` і `/proc/<pid>/environ` будь-якому root-процесу
-(що само по собі ОК, бо сервіс і так під root, але файл з `chmod 600`
-акуратніший і легше ротується/міняється без редагування unit-файла).
-
-### 6.2 Приклад systemd unit + timer (чернетка, не встановлено)
-
-```ini
-# /etc/systemd/system/system-backup.service
-[Unit]
-Description=Incremental system backup via restic
-Wants=network-online.target
-After=network-online.target
-
-[Service]
-Type=oneshot
-Environment=RESTIC_PASSWORD_FILE=/etc/restic-backup.pass
-ExecStart=/bin/bash /media/ubuntu/backup_img/system-backups/backup-system.sh --prune
-# Не мати конкуруючих запусків на рівні systemd теж (додатково до flock):
-# Проте flock всередині скрипта вже покриває цей випадок.
-```
-
-```ini
-# /etc/systemd/system/system-backup.timer
-[Unit]
-Description=Daily system backup
-
-[Timer]
-OnCalendar=*-*-* 03:00:00
-Persistent=true
-RandomizedDelaySec=15m
-
-[Install]
-WantedBy=timers.target
-```
-
-`Persistent=true` означає: якщо машина була вимкнена о 03:00, таймер
-наздожене й запустить бекап при наступному завантаженні — важливо для
-десктопа/ноутбука, який не завжди увімкнений вночі.
-
-### 6.3 Моніторинг успіху/невдачі
-
-Код завершення скрипта: **0** означає "успіх АБО коректно пропущено
-через lock", **не 0** — реальна помилка. Якщо потрібно розрізняти
-успіх від skip на рівні systemd (наприклад, для алертів) — читайте
-останній рядок `backup-history.log` (`status=`), а не лише `$?`.
-Просто приклад: `OnFailure=` unit у systemd спрацює лише на реальний
-ненульовий код, skip він не зловить (і не повинен — це не помилка).
-
-### 6.4 Що ще варто додати перед повною автономністю (не зроблено зараз)
-
-- **Періодична повна перевірка даних.** `backup-system.sh` робить лише
-  дешевий `restic check` (метадані, без читання пакетів). Раз на
-  місяць варто окремим таймером ганяти `restic check --read-data` —
-  це довго і навантажує диск, тому свідомо не робиться на кожному
-  бекапі.
-- **Сповіщення при `failed`.** Зараз лише запис у
-  `backup-history.log`; без email/Slack/ntfy-виклику. `OnFailure=`
-  systemd unit — природне місце для цього.
-- **Ротація `backup-history.log`.** Файл ніколи не обрізається. Для
-  щоденних бекапів це роки до відчутного розміру, але `logrotate`
-  конфіг не завадить.
+Раз на місяць доцільно вручну виконати
+`sudo restic -r ./restic check --read-data`: звичайний запуск робить швидкий
+`restic check` без повного читання даних.
 
 ## 7. Розмір і 200 GiB вільного місця на оригінальній системі
 
