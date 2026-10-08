@@ -144,10 +144,10 @@ load_profile() {
   local key value config_values
   local -a config_args=()
   [[ -n "$BACKUP_CONFIG" ]] && config_args=(--config "$BACKUP_CONFIG")
-  config_values=$(python3 "$CONFIG_HELPER" export "${config_args[@]}") || die "Не вдалося завантажити backup profile"
+  config_values=$(python3 "$CONFIG_HELPER" export --include-json "${config_args[@]}") || die "Не вдалося завантажити backup profile"
   while IFS=$'\t' read -r key value; do
     case "$key" in
-      ROOT_SNAPSHOT_MODE|ENCRYPTION_MODE|BOOT_MODE|HOME_MODE|HOME_PATH|HOME_SNAPSHOT_MODE)
+      BACKUP_PROFILE_JSON|ROOT_SNAPSHOT_MODE|ENCRYPTION_MODE|BOOT_MODE|HOME_MODE|HOME_PATH|HOME_SNAPSHOT_MODE)
         printf -v "$key" '%s' "$value"
         ;;
       *) die "Невідомий ключ з JSON config helper: $key" ;;
@@ -442,9 +442,32 @@ ESP_FS_UUID=""
 export ROOT_FS_UUID BOOT_FS_UUID ESP_FS_UUID
 export ROOT_IS_LVM LUKS_ENABLED HAS_ESP HOME_SEPARATE USE_LVM_SNAPSHOT
 export ROOT_SOURCE ROOT_BACKUP_PATH VG_NAME LV_NAME PV_NAME CRYPT_NAME LUKS_PART DISK BOOT_SRC ESP_SRC HOME_MODE HOME_PATH HOME_SOURCE HOME_DISK
-export ROOT_SNAPSHOT_MODE ENCRYPTION_MODE BOOT_MODE HOME_SNAPSHOT_MODE RUN_TAG
-python3 - "$META/layout.json" <<'PY'
+export ROOT_SNAPSHOT_MODE ENCRYPTION_MODE BOOT_MODE HOME_SNAPSHOT_MODE RUN_TAG BACKUP_PROFILE_JSON
+export KEEP_DAILY KEEP_WEEKLY KEEP_MONTHLY PRUNE
+python3 - "$META/layout.json" "$SCRIPT_DIR/scripts/service-config.py" <<'PY'
 import json, os, sys
+import importlib.util
+from pathlib import Path
+
+# Only save the validated configs, never the password or the whole environment.
+metadata = Path(sys.argv[1]).parent
+backup_config = json.loads(os.environ["BACKUP_PROFILE_JSON"])
+service_json = os.environ.get("SYSTEM_BACKUP_SERVICE_CONFIG_JSON", "")
+service_config = json.loads(service_json) if service_json else None
+if service_config is not None:
+    spec = importlib.util.spec_from_file_location("service_config", sys.argv[2])
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    if not isinstance(service_config, dict) or set(service_config) - helper.ALLOWED:
+        raise ValueError("Service metadata contains unsupported config fields")
+    helper.validate(service_config)
+for filename, config in (("backup-config.json", backup_config), ("service-config.json", service_config)):
+    target = metadata / filename
+    if config is None:
+        target.unlink(missing_ok=True)  # manual run must not keep a prior service config
+    else:
+        target.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n")
+        target.chmod(0o600)
 
 def yes(name): return os.environ[name] == "1"
 data = {
@@ -492,6 +515,12 @@ data = {
     "sfdisk_file": "home-disk.sfdisk" if os.environ["HOME_TABLE_TYPE"] else None,
     "gpt_file": "home-disk.gpt" if os.environ["HOME_TABLE_TYPE"] == "gpt" else None,
     "snapshot": os.environ["HOME_SNAPSHOT_MODE"],
+  },
+  "configuration": {
+    "backup_file": "backup-config.json",
+    "service_file": "service-config.json" if service_config is not None else None,
+    "retention": {"daily": int(os.environ["KEEP_DAILY"]), "weekly": int(os.environ["KEEP_WEEKLY"]), "monthly": int(os.environ["KEEP_MONTHLY"])},
+    "prune_requested": yes("PRUNE"),
   },
   "files": {"lvm_config": "lvm-vg.conf" if yes("ROOT_IS_LVM") else None},
 }

@@ -102,7 +102,7 @@ def validate(config: dict) -> None:
         raise ConfigError("notice_user must be a single-line string")
 
 
-def export(config: dict) -> None:
+def export(config: dict, *, include_json: bool = False) -> None:
     values = {
         "CODE_DIR": config.get("code_dir", config["backup_dir"]),
         "BACKUP_DIR": config["backup_dir"],
@@ -118,6 +118,8 @@ def export(config: dict) -> None:
         "SUCCESS_CALLBACK": config["success_callback"],
         "NOTICE_USER": config["notice_user"],
     }
+    if include_json:
+        values["SERVICE_CONFIG_JSON"] = json.dumps(config, ensure_ascii=True, separators=(",", ":"))
     for key, value in values.items():
         if "\t" in value or "\n" in value:
             raise ConfigError(f"{key} contains a control character")
@@ -128,13 +130,14 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=("validate", "export"))
     parser.add_argument("--config", required=True, metavar="FILE")
+    parser.add_argument("--include-json", action="store_true", help="include the validated config in export")
     args = parser.parse_args()
     try:
         config = load(args.config)
         if args.command == "validate":
             print(f"OK: service configuration: {args.config}")
         else:
-            export(config)
+            export(config, include_json=args.include_json)
     except ConfigError as exc:
         print(f"service config error: {exc}", file=sys.stderr)
         raise SystemExit(2)

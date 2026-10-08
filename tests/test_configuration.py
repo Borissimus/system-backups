@@ -40,6 +40,16 @@ class ConfigurationTests(unittest.TestCase):
             profile, _ = BACKUP.load(str(filename))
             self.assertEqual(profile['home']['path'], '/home//literal')
 
+    def test_export_config_snapshot_includes_defaults_and_preserves_comment_format_inputs(self):
+        for helper, key, config in [(BACKUP, 'BACKUP_PROFILE_JSON', copy.deepcopy(BACKUP.DEFAULT)),
+                                     (SERVICE, 'SERVICE_CONFIG_JSON', self.service())]:
+            with self.subTest(key=key):
+                stream = io.StringIO()
+                with contextlib.redirect_stdout(stream):
+                    helper.export(config, include_json=True)
+                fields = dict(line.split('\t', 1) for line in stream.getvalue().splitlines())
+                self.assertEqual(json.loads(fields[key]), config)
+
     def test_invalid_backup_values_raise_config_error(self):
         for section, key, value in [('root', 'snapshot_mode', []), ('home', 'mode', {}),
                                     ('home', 'path', '/home\nother'), ('home', 'path', '/'),
@@ -154,6 +164,7 @@ esac''',
                 helper = root / 'scripts' / 'backup-config.py'
                 helper.write_bytes((ROOT / 'scripts' / 'backup-config.py').read_bytes())
                 helper.chmod(0o755)
+                (root / 'scripts' / 'service-config.py').write_bytes((ROOT / 'scripts' / 'service-config.py').read_bytes())
                 script = (ROOT / 'backup-system.sh').read_text().replace('if [[ $EUID -ne 0 ]]; then', 'if false; then', 1)
                 (root / 'backup-system.sh').write_text(script)
                 storage = root / 'storage'
@@ -162,6 +173,9 @@ esac''',
                 config = copy.deepcopy(BACKUP.DEFAULT)
                 config['home']['mode'] = home
                 (root / 'profile.json').write_text(json.dumps(config))
+                (storage / 'recovery-metadata').mkdir()
+                (storage / 'recovery-metadata' / 'service-config.json').write_text('{"stale": true}')
+                service_config = self.service()
                 binary = root / 'bin'
                 binary.mkdir()
                 commands = {
@@ -195,7 +209,8 @@ esac""",
                     executable.chmod(0o755)
                 command_log = root / 'restic-commands'
                 env = dict(os.environ, PATH=f"{binary}:{os.environ['PATH']}",
-                           RESTIC_PASSWORD='mock-password', MOCK_RESTIC_LOG=str(command_log))
+                           RESTIC_PASSWORD='mock-password', MOCK_RESTIC_LOG=str(command_log),
+                           SYSTEM_BACKUP_SERVICE_CONFIG_JSON=json.dumps(service_config) if home == 'restic' else '')
                 result = subprocess.run(['bash', str(root / 'backup-system.sh'), '--config',
                                          str(root / 'profile.json'), '--backup-dir', str(storage), '--prune'],
                                         env=env, capture_output=True, text=True)
@@ -208,6 +223,22 @@ esac""",
                     self.assertIn('--tag system-home', home_calls[0])
                 layout = json.loads((storage / 'recovery-metadata' / 'layout.json').read_text())
                 self.assertEqual(layout['home']['backed_up'], home == 'restic')
+                metadata = storage / 'recovery-metadata'
+                saved_profile = json.loads((metadata / 'backup-config.json').read_text())
+                self.assertEqual(saved_profile, config)
+                self.assertEqual(layout['configuration']['backup_file'], 'backup-config.json')
+                self.assertEqual(layout['configuration']['prune_requested'], True)
+                self.assertEqual((metadata / 'backup-config.json').stat().st_mode & 0o777, 0o600)
+                if home == 'restic':
+                    self.assertEqual(json.loads((metadata / 'service-config.json').read_text()), service_config)
+                    self.assertEqual(layout['configuration']['service_file'], 'service-config.json')
+                else:
+                    self.assertFalse((metadata / 'service-config.json').exists())
+                    self.assertIsNone(layout['configuration']['service_file'])
+                for filename in ['layout.json', 'backup-config.json', 'service-config.json']:
+                    if (metadata / filename).exists():
+                        self.assertNotIn('mock-password', (metadata / filename).read_text())
+                self.assertTrue(any(f' backup {metadata} ' in call and '--tag recovery-metadata' in call for call in calls))
                 self.assertEqual(layout['root']['filesystem_uuid'], 'mock-uuid')
                 self.assertIsNone(layout['home']['sfdisk_file'])
                 self.assertIsNone(layout['home']['gpt_file'])

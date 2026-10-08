@@ -17,10 +17,10 @@ fail() {
 [[ -r "$CONFIG" ]] || fail "відсутній конфіг $CONFIG; запустіть installer"
 [[ -x "$CONFIG_HELPER" ]] || fail "відсутній config helper $CONFIG_HELPER; запустіть installer"
 
-config_values=$(python3 "$CONFIG_HELPER" export --config "$CONFIG") || exit 2
+config_values=$(python3 "$CONFIG_HELPER" export --include-json --config "$CONFIG") || exit 2
 while IFS=$'\t' read -r key value; do
   case "$key" in
-    CODE_DIR|BACKUP_DIR|BACKUP_MOUNT|BACKUP_DISK_UUID|BACKUP_PROFILE|SCHEDULE|KEEP_DAILY|KEEP_WEEKLY|KEEP_MONTHLY|MIN_REPOSITORY_FREE_GIB|RESTIC_PASSWORD_FILE|SUCCESS_CALLBACK|NOTICE_USER)
+    SERVICE_CONFIG_JSON|CODE_DIR|BACKUP_DIR|BACKUP_MOUNT|BACKUP_DISK_UUID|BACKUP_PROFILE|SCHEDULE|KEEP_DAILY|KEEP_WEEKLY|KEEP_MONTHLY|MIN_REPOSITORY_FREE_GIB|RESTIC_PASSWORD_FILE|SUCCESS_CALLBACK|NOTICE_USER)
       printf -v "$key" '%s' "$value"
       ;;
     *) fail "невідомий ключ від service config helper: $key" ;;
@@ -64,6 +64,8 @@ export XDG_CACHE_HOME="$CACHE_DIR"
 echo "system-backup: запускаю backup + retention (daily=$KEEP_DAILY weekly=$KEEP_WEEKLY monthly=$KEEP_MONTHLY)"
 
 export RESTIC_PASSWORD_FILE KEEP_DAILY KEEP_WEEKLY KEEP_MONTHLY
+# Capture the exact config loaded above, even if the file changes during backup.
+export SYSTEM_BACKUP_SERVICE_CONFIG_JSON="$SERVICE_CONFIG_JSON"
 backup_args=(--prune --backup-dir "$BACKUP_DIR")
 if [[ -n "$BACKUP_PROFILE" ]]; then
   [[ -r "$BACKUP_PROFILE" ]] || fail "backup profile недоступний: $BACKUP_PROFILE"

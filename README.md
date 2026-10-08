@@ -62,6 +62,8 @@ USB — для цього є `restore-system.sh`). За один прогін:
    `recovery-metadata` і, якщо профіль так задає, окремий `/home`. Типи
    мають теги `system-root` / `system-boot` / `recovery-metadata` /
    `system-home` плюс унікальний `run-<timestamp>` на кожен прогін.
+   У snapshot metadata також входять фактично використаний backup-профіль
+   і, для запуску через службу, service-конфіг; пароль туди не копіюється.
 6. Прибирає снепшот, опційно застосовує retention (`--prune`), робить
    швидку перевірку репозиторію (`restic check`, без читання даних).
 

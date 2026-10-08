@@ -91,7 +91,7 @@ def validate(config: dict) -> None:
         raise ConfigError("home.snapshot_mode currently supports only live")
 
 
-def export(config: dict) -> None:
+def export(config: dict, *, include_json: bool = False) -> None:
     values = {
         "ROOT_SNAPSHOT_MODE": config["root"]["snapshot_mode"],
         "ENCRYPTION_MODE": config["encryption"]["mode"],
@@ -100,6 +100,8 @@ def export(config: dict) -> None:
         "HOME_PATH": config["home"]["path"],
         "HOME_SNAPSHOT_MODE": config["home"]["snapshot_mode"],
     }
+    if include_json:
+        values["BACKUP_PROFILE_JSON"] = json.dumps(config, ensure_ascii=True, separators=(",", ":"))
     for key, value in values.items():
         if "\t" in value or "\n" in value:
             raise ConfigError(f"{key} contains a control character")
@@ -110,13 +112,14 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=("validate", "export"))
     parser.add_argument("--config", metavar="FILE")
+    parser.add_argument("--include-json", action="store_true", help="include the validated config in export")
     args = parser.parse_args()
     try:
         config, source = load(args.config)
         if args.command == "validate":
             print(f"OK: backup profile: {source}")
         else:
-            export(config)
+            export(config, include_json=args.include_json)
     except ConfigError as exc:
         print(f"backup config error: {exc}", file=sys.stderr)
         raise SystemExit(2)
