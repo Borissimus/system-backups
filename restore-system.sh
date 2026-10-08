@@ -32,23 +32,32 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
-REPO="$SCRIPT_DIR/restic"
-META="$SCRIPT_DIR/recovery-metadata"
-STATE_FILE="$SCRIPT_DIR/.restore-progress"
+BACKUP_DIR="$SCRIPT_DIR"
 
 DRY_RUN=0
 STATUS_ONLY=0
 RESET=0
 RETRY_STEP=""
-for arg in "$@"; do
+while [[ $# -gt 0 ]]; do
+  arg="$1"
   case "$arg" in
+    --backup-dir)
+      shift
+      [[ $# -gt 0 && "$1" == /* ]] || { echo "--backup-dir requires an absolute path" >&2; exit 2; }
+      BACKUP_DIR=$(realpath -m -- "$1")
+      [[ "$BACKUP_DIR" != / ]] || { echo "--backup-dir must not be /" >&2; exit 2; }
+      ;;
     --dry-run) DRY_RUN=1 ;;
     --status) STATUS_ONLY=1 ;;
     --reset) RESET=1 ;;
     --retry-step=*) RETRY_STEP="${arg#--retry-step=}" ;;
     *) echo "Unknown argument: $arg" >&2; exit 2 ;;
   esac
+  shift
 done
+REPO="$BACKUP_DIR/restic"
+META="$BACKUP_DIR/recovery-metadata"
+STATE_FILE="$BACKUP_DIR/.restore-progress"
 
 MNT_TARGET=/mnt/target
 # Проміжна тека лише для /boot (кілька сотень MB) — навмисно НЕ на
@@ -57,7 +66,7 @@ MNT_TARGET=/mnt/target
 # поруч зі скриптом — там завжди є достатньо вільного місця для такого
 # малого об'єму. Корінь (275G) відновлюється окремо, без проміжної
 # теки взагалі — див. крок restore_root.
-MNT_RESTORE="$SCRIPT_DIR/.restic-restore-tmp"
+MNT_RESTORE="$BACKUP_DIR/.restic-restore-tmp"
 VG_NAME=ubuntu-vg
 LV_NAME=ubuntu-lv
 CRYPT_NAME=cryptroot
@@ -93,7 +102,7 @@ forget_from() {
 # Small key=value cache (separate from the step journal above) for results
 # that are expensive to recompute but cheap to invalidate correctly, e.g.
 # "restic stats" over a multi-hundred-GiB snapshot.
-CACHE_FILE="$SCRIPT_DIR/.restore-cache"
+CACHE_FILE="$BACKUP_DIR/.restore-cache"
 # Завжди повертає 0, незалежно від того, чи знайдено ключ — інакше
 # "VAR=$(cache_get ...)" при відсутньому кеші (не 0 tut) миттєво вбиває
 # скрипт через set -e ще ДО будь-якого виводу (перевірено репродукцією:
@@ -190,7 +199,13 @@ if [[ -f "$META/layout.json" ]]; then
   recovery_profile=$(python3 - "$META/layout.json" <<'PY'
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as f:
-    print(json.load(f).get("profile", {}).get("recovery_profile", "unknown"))
+    layout = json.load(f)
+    supported = (layout.get("root", {}).get("backup_path") == "/mnt/root-backup-snapshot"
+                 and layout.get("profile", {}).get("boot_mode") != "none"
+                 and layout.get("root", {}).get("filesystem_type", "ext4") == "ext4"
+                 and layout.get("boot", {}).get("filesystem_type", "ext4") == "ext4"
+                 and layout.get("boot", {}).get("separate_mount", True))
+    print(layout.get("profile", {}).get("recovery_profile", "unknown") if supported else "unsupported-backup-layout")
 PY
 )
   [[ "$recovery_profile" == lvm-luks-uefi ]] || die \
@@ -289,7 +304,7 @@ fi
 log "Пошук кандидатів на цільовий диск"
 
 BACKUP_SRC_DISK=""
-BACKUP_MOUNT_SRC=$(findmnt -no SOURCE --target "$SCRIPT_DIR" || true)
+BACKUP_MOUNT_SRC=$(findmnt -no SOURCE --target "$BACKUP_DIR" || true)
 if [[ -n "$BACKUP_MOUNT_SRC" ]]; then
   BACKUP_SRC_DISK=$(lsblk -no PKNAME "$BACKUP_MOUNT_SRC" 2>/dev/null || true)
 fi
@@ -518,10 +533,42 @@ log "Читання UUID з recovery-metadata/blkid.txt"
 # || true: якщо grep нічого не знайде (malformed blkid.txt), пайплайн
 # поверне 1, і без цього голе "VAR=$(...)" під set -e вб'є скрипт МОВЧКИ
 # ще до того, як спрацює наступний явний die() з людяним повідомленням.
-ESP_UUID=$(grep 'nvme0n1p1:' "$META/blkid.txt" | grep -oP '(?<!PART)UUID="\K[^"]+' || true)
-BOOT_UUID=$(grep 'nvme0n1p2:' "$META/blkid.txt" | grep -oP '(?<!PART)UUID="\K[^"]+' || true)
-ROOT_UUID=$(grep 'ubuntu--vg-ubuntu--lv:' "$META/blkid.txt" | grep -oP '(?<!PART)UUID="\K[^"]+' || true)
-[[ -n "$ESP_UUID" && -n "$BOOT_UUID" && -n "$ROOT_UUID" ]] || die "Не вдалося прочитати UUID з blkid.txt"
+if [[ -f "$META/layout.json" ]]; then
+  metadata_uuids=$(python3 - "$META/layout.json" "$META/blkid.txt" <<'PYMETA'
+import json, re, sys
+from pathlib import Path
+with open(sys.argv[1]) as f:
+    layout = json.load(f)
+lines = Path(sys.argv[2]).read_text().splitlines()
+for source, uuid in (
+    (layout['boot']['esp_source'], layout['boot'].get('esp_uuid')),
+    (layout['boot']['source'], layout['boot'].get('filesystem_uuid')),
+    (layout['root']['source'], layout['root'].get('filesystem_uuid')),
+):
+    if not uuid:
+        sources = [source]
+        root = layout['root']
+        if source == root['source'] and root.get('vg_name') and root.get('lv_name'):
+            mapper = '/dev/mapper/' + root['vg_name'].replace('-', '--') + '-' + root['lv_name'].replace('-', '--')
+            sources.append(mapper)
+        matches = [re.search(r'(?<!PART)UUID="([^"\n]+)"', line)
+                   for line in lines if any(line.startswith(s + ':') for s in sources)]
+        uuid = next((m[1] for m in matches if m), '')
+    if not uuid:
+        raise SystemExit(f'Missing filesystem UUID for {source}')
+    print(uuid)
+PYMETA
+) || die "Не вдалося прочитати UUID filesystem з recovery metadata"
+  mapfile -t metadata_uuid_array <<< "$metadata_uuids"
+  ESP_UUID="${metadata_uuid_array[0]}"
+  BOOT_UUID="${metadata_uuid_array[1]}"
+  ROOT_UUID="${metadata_uuid_array[2]}"
+else
+  ESP_UUID=$(grep 'nvme0n1p1:' "$META/blkid.txt" | grep -oP '(?<!PART)UUID="\K[^"]+' || true)
+  BOOT_UUID=$(grep 'nvme0n1p2:' "$META/blkid.txt" | grep -oP '(?<!PART)UUID="\K[^"]+' || true)
+  ROOT_UUID=$(grep 'ubuntu--vg-ubuntu--lv:' "$META/blkid.txt" | grep -oP '(?<!PART)UUID="\K[^"]+' || true)
+fi
+[[ -n "$ESP_UUID" && -n "$BOOT_UUID" && -n "$ROOT_UUID" ]] || die "Не вдалося прочитати UUID filesystem"
 ESP_UUID_NODASH=$(echo "$ESP_UUID" | tr -d '-' | tr '[:lower:]' '[:upper:]')
 
 FORMAT_CHECK='[[ "$(blkid -s TYPE -o value "$ESP" 2>/dev/null)" == "vfat" \
@@ -596,7 +643,7 @@ else
   # /boot — кілька сотень MB, проміжна тека тут безпечна; кладемо її на
   # диск бекапу (SCRIPT_DIR), а не на overlay Live-сесії, і перевіряємо
   # місце наперед — так само, як і для кореня.
-  require_free_space_gib 3 "$SCRIPT_DIR"
+  require_free_space_gib 3 "$BACKUP_DIR"
   mkdir -p "$MNT_RESTORE"
   restic -r "$REPO" restore latest --tag system-boot --target "$MNT_RESTORE" --sparse --verify
   rsync -aHAX --numeric-ids "$MNT_RESTORE/boot/" "$MNT_TARGET/boot/"

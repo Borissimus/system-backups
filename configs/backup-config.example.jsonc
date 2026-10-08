@@ -1,0 +1,38 @@
+// Backup profile. Copy to configs/backup-config.jsonc, edit and validate.
+// Only // comments on their own lines are supported. No inline/block comments.
+// Or use configure-system-backup.py to generate plain JSON in configs/.
+{
+  // Schema version; only integer 1 is supported.
+  "schema_version": 1,
+  "root": {
+    // auto: snapshot for LVM, otherwise live backup.
+    // lvm: require an LVM snapshot; fail when root is not an LV.
+    // live: read root directly, even on LVM; changes during backup are not atomic.
+    "snapshot_mode": "auto"
+  },
+  "encryption": {
+    // auto: detect LUKS and save its header when present.
+    // required: fail unless LUKS exists under root.
+    // none: fail if LUKS exists; this does not disable disk encryption.
+    "mode": "auto"
+  },
+  "boot": {
+    // auto: back up /boot and the mounted /boot/efi when present.
+    // required: also require a mounted ESP at /boot/efi.
+    // none: omit the separate boot snapshot; only use with another recovery plan.
+    "mode": "auto"
+  },
+  "home": {
+    // auto: /home is included only if it belongs to the root filesystem.
+    // restic: include a separately mounted /home in the SAME Restic repository,
+    //         under system-home; the configured retention also applies to it.
+    // exclude: skip a separate /home mount.
+    // external: skip it, recording that another backup system handles it.
+    // restic/exclude/external require /home to be a separate mount.
+    "mode": "auto",
+    // Absolute mount path. The generator uses /home; change here for a custom path.
+    "path": "/home",
+    // Only live is supported for a separate home filesystem.
+    "snapshot_mode": "live"
+  }
+}

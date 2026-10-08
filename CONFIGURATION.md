@@ -1,24 +1,99 @@
 # Конфігурація для іншої машини
 
-Код у репозиторії не містить імен дисків, UUID, шляху монтування чи пароля.
-Кожна машина має два локальні JSON-файли, які навмисно додані до `.gitignore`:
+Профіль описує вимоги до системи; скрипт звіряє їх із фактичною топологією.
+Налаштування дисків, сховища й розкладу зберігаються окремо від коду.
+Користувацькі конфіги зберігаються у `configs/` і ігноруються Git.
+В репозиторії лишаються лише детально прокоментовані `*.example.jsonc`.
+Підтримуються JSON та коментарі `//` на окремих рядках; inline-коментарі
+і блоки `/* ... */` не підтримуються. Генератор типово пише звичайний
+JSON у `configs/`; `--output-dir` дозволяє обрати інший каталог.
 
-- `backup-config.json` — що саме вважати системним backup і як обробляти
+Робочі файли:
+
+- `configs/backup-config.json` — що саме вважати системним backup і як обробляти
   схему root/LUKS/`/home`;
 - `/etc/system-backup/service.json` — де лежить backup-диск, розклад,
   retention і параметри systemd-обгортки.
 
-Почати можна так:
+Повний порядок підготовки диска, встановлення залежностей, створення
+конфігів, ініціалізації restic та першого backup — у
+[README.md](README.md#3-налаштування-на-новій-машині). Python використовує
+стандартну бібліотеку; окреме середовище чи пакети pip не потрібні.
+
+Нижче — генератор та довідник полів. Альтернативно можна скопіювати
+`configs/backup-config.example.jsonc` і `configs/service-config.example.jsonc`, відредагувати
+їх для своєї машини та перевірити командами `validate`.
+
+## Створення конфігів
+
+Генератор створює два JSON-файли, перевіряє їх і визначає UUID вже
+змонтованого backup-диска. Він не встановлює службу, не створює restic
+репозиторій та не перезаписує наявні конфіги.
 
 ```bash
-cp backup-config.example.json backup-config.json
-python3 scripts/backup-config.py validate --config backup-config.json
+python3 scripts/configure-system-backup.py \
+  --profile lvm-luks-uefi \
+  --home exclude \
+  --backup-mount /mnt/backup \
+  --backup-dir /mnt/backup/system-backups \
+  --output-dir "$PWD/configs" \
+  --schedule 20:00 \
+  --notice-user "$USER"
 ```
 
-Інсталятор створює цей файл автоматично, якщо його ще немає. Він також
-створює `/etc/system-backup/service.json` з фактичними mount path та UUID
-поточного backup-диска. Перевірка конфігів не виконує backup і нічого не
-змінює.
+Замініть `/mnt/backup` фактичним mount вашого диска. Код може залишатися
+в робочому каталозі: `code_dir` і `backup_dir` незалежні. У storage-каталозі
+будуть `restic/`, `recovery-metadata/`, lock та журнал.
+
+Профілі: `auto`, `lvm-luks-uefi`, `lvm-plain`, `partition-luks`,
+`partition-plain`. Це початкові вимоги, які можна редагувати в JSON:
+LVM-профілі вимагають snapshot, partition-профілі використовують live
+backup, `luks` вимагає шифрування, `plain` вимагає його відсутності.
+UEFI-профіль вимагає змонтований ESP. RAID, VG із кількома PV та складні
+багатодискові root-схеми наразі не підтримуються.
+
+Якщо `/home` на окремому mount, генератор вимагає явного вибору:
+
+- `--home restic`: копіювати `/home` у **той самий репозиторій**, окремим
+  snapshot із тегом `system-home` і спільним тегом запуску; retention
+  застосовується також до нього;
+- `--home exclude`: пропустити окремий `/home`;
+- `--home external`: пропустити, позначивши, що його backup ведеться окремо;
+- `--home auto`: включати лише `/home`, який є частиною root filesystem.
+
+Якщо `/home` на root filesystem, виберіть `auto`: він уже входить у root
+backup. Визначальною є межа filesystem, а не фізичний диск: окремий розділ
+`/home` на тому самому диску теж потребує вибору.
+
+Перегляд плану можливий до створення restic-репозиторію і без його пароля;
+план та dry-run не створюють lock чи записів у backup-history:
+
+```bash
+sudo bash backup-system.sh --config configs/backup-config.json \
+  --backup-dir /mnt/backup/system-backups --print-plan
+```
+
+Повне налаштування за створеними конфігами виконується однією командою:
+
+```bash
+sudo bash scripts/setup-system-backup.sh --config "$PWD/configs/service-config.json"
+```
+
+Скрипт встановлює відсутні залежності, налаштовує `fstab` за UUID,
+монтує диск, встановлює службу, готує пароль і новий restic-репозиторій,
+виконує dry-run та backup. Після нового успішного backup вмикає таймер.
+Для збереження вимкненого таймера додайте `--no-enable`.
+Наявні пароль, репозиторій та узгоджений запис у `fstab` зберігаються;
+повторний запуск виконує ще один backup. Диск не форматується.
+Докладні кроки та ручний варіант — у [README.md](README.md).
+
+Для оновлення лише службових файлів використовуйте
+`scripts/install-system-backup.sh`:
+
+`install --config FILE` застосовує саме цей service-конфіг, включно під час
+повторної інсталяції. Без `--config` встановлений `/etc` конфіг зберігається.
+Новий таймер не вмикається автоматично; вже увімкнений не вимикається. Профіль лишається за шляхом
+`backup_profile`, тому цей файл і `code_dir` мають бути доступні службі.
 
 ## `backup-config.json`
 
@@ -66,19 +141,24 @@ Live backup без LVM придатний для звичайної систем
 Кожен прогін зберігає у `recovery-metadata/layout.json` виявлену топологію,
 обраний профіль, generic GPT/sfdisk/LUKS/LVM metadata і факт, чи окремий
 `/home` реально потрапив у цей запуск. Якщо `/home` лежить на іншому
-звичайному block-диску, також зберігаються `home-disk.gpt` та
-`home-disk.sfdisk`; для LV/мережевого mount у manifest лишається точний
+звичайному block-диску й включений через `restic`, зберігається його
+таблиця розділів: `home-disk.sfdisk`, а для GPT — також `home-disk.gpt`.
+Для filesystem безпосередньо на всьому диску таблиці немає; manifest
+позначає це явно, без фіктивних GPT-файлів. Для виключеного `/home`
+його таблиця не зберігається; для LV/мережевого mount у manifest лишається точний
 source, але схема нижнього storage потребує окремої recovery-процедури.
 
 ## `service.json`
 
-Приклад — `service-config.example.json`. Він не містить пароль: пароль
+Приклад — `configs/service-config.example.jsonc`. Він не містить пароль: пароль
 живе окремо в root-only файлі, на який посилається `restic_password_file`.
 Важливі поля:
 
 - `backup_mount` і `backup_disk_uuid`: служба спершу перевіряє, що саме цей
   диск змонтовано; це не дає зробити backup у порожню локальну директорію;
-- `backup_dir`: каталог цього репозиторію всередині mount;
+- `backup_dir`: каталог сховища бекапів усередині mount;
+- `code_dir`: каталог коду; за відсутності використовується `backup_dir`
+  для сумісності з конфігами попередньої версії;
 - `backup_profile`: шлях до `backup-config.json`; порожній рядок означає
   built-in безпечні `auto` defaults;
 - `schedule`: локальний час `HH:MM`;
@@ -93,20 +173,20 @@ system-backupctl timer
 ```
 
 Перед першим запуском можна підготувати локальний (ігнорований Git)
-`service-config.json` поруч із прикладом: інсталятор перевірить і скопіює
+`configs/service-config.json` поруч із прикладом: інсталятор перевірить і скопіює
 його до `/etc/system-backup/service.json`. Після першої інсталяції
 канонічна робоча копія — саме файл у `/etc`; інсталятор зберігає його й
-пароль, але перегенеровує systemd drop-in з `RequiresMountsFor` та часом
-timer. Сам backup-диск все одно має бути описаний у `/etc/fstab` через UUID
+пароль, але перегенеровує залежності mount unit (`Requires`/`After`) та час timer. Сам backup-диск все одно має бути описаний у `/etc/fstab` через UUID
 і `nofail`.
 
-Не копіюйте `service-config.example.json` без редагування: замініть усі
+Не копіюйте `configs/service-config.example.jsonc` без редагування: замініть усі
 `USER`, mount path і `PUT-BACKUP-DISK-UUID-HERE`, потім перевірте файл:
 
 ```bash
-cp service-config.example.json service-config.json
-# відредагуйте service-config.json для конкретної машини
-python3 scripts/service-config.py validate --config service-config.json
+cp configs/service-config.example.jsonc configs/service-config.jsonc
+# відредагуйте configs/service-config.jsonc для конкретної машини
+python3 scripts/service-config.py validate --config configs/service-config.jsonc
+sudo bash scripts/setup-system-backup.sh --config "$PWD/configs/service-config.jsonc"
 ```
 
 ## Межа поточної реалізації restore
@@ -117,3 +197,10 @@ python3 scripts/service-config.py validate --config service-config.json
 `layout.json` описує інший профіль, він зупиниться до змін на цільовому
 диску. Це запобіжник: процедуру розбиття та завантаження для нової топології
 треба спершу реалізувати й перевірити на тестовому SSD.
+
+Для відновлення зі сховища, відокремленого від коду, передайте
+`restore-system.sh --backup-dir /mnt/backup/system-backups`. Нові metadata
+містять UUID filesystem, щоб відновлення не залежало від імені NVMe.
+Live-root, вимкнений boot backup та root/boot з filesystem, відмінною від
+ext4, не підтримуються цим автоматичним restore. Окремий `system-home`
+потрібно відновлювати окремо через restic; restore-system.sh його не копіює.

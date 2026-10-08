@@ -17,14 +17,15 @@ fail() {
 [[ -r "$CONFIG" ]] || fail "відсутній конфіг $CONFIG; запустіть installer"
 [[ -x "$CONFIG_HELPER" ]] || fail "відсутній config helper $CONFIG_HELPER; запустіть installer"
 
+config_values=$(python3 "$CONFIG_HELPER" export --config "$CONFIG") || exit 2
 while IFS=$'\t' read -r key value; do
   case "$key" in
-    BACKUP_DIR|BACKUP_MOUNT|BACKUP_DISK_UUID|BACKUP_PROFILE|SCHEDULE|KEEP_DAILY|KEEP_WEEKLY|KEEP_MONTHLY|MIN_REPOSITORY_FREE_GIB|RESTIC_PASSWORD_FILE|SUCCESS_CALLBACK|NOTICE_USER)
+    CODE_DIR|BACKUP_DIR|BACKUP_MOUNT|BACKUP_DISK_UUID|BACKUP_PROFILE|SCHEDULE|KEEP_DAILY|KEEP_WEEKLY|KEEP_MONTHLY|MIN_REPOSITORY_FREE_GIB|RESTIC_PASSWORD_FILE|SUCCESS_CALLBACK|NOTICE_USER)
       printf -v "$key" '%s' "$value"
       ;;
     *) fail "невідомий ключ від service config helper: $key" ;;
   esac
-done < <(python3 "$CONFIG_HELPER" export --config "$CONFIG")
+done <<< "$config_values"
 
 : "${BACKUP_DIR:?BACKUP_DIR не задано}"
 : "${BACKUP_MOUNT:?BACKUP_MOUNT не задано}"
@@ -44,7 +45,7 @@ mounted_uuid=$(blkid -s UUID -o value "$mounted_source" 2>/dev/null || true)
 backup_mount_actual=$(findmnt -no TARGET --target "$BACKUP_DIR" 2>/dev/null || true)
 [[ "$backup_mount_actual" == "$BACKUP_MOUNT" ]] || \
   fail "BACKUP_DIR=$BACKUP_DIR не лежить на очікуваному mount $BACKUP_MOUNT"
-[[ -x "$BACKUP_DIR/backup-system.sh" ]] || fail "не знайдено $BACKUP_DIR/backup-system.sh"
+[[ -x "$CODE_DIR/backup-system.sh" ]] || fail "не знайдено $CODE_DIR/backup-system.sh"
 [[ -d "$BACKUP_DIR/restic" && -f "$BACKUP_DIR/restic/config" ]] || \
   fail "Restic repository недоступний у $BACKUP_DIR/restic (backup-диск не змонтовано?)"
 [[ -r "$RESTIC_PASSWORD_FILE" ]] || fail "файл пароля недоступний: $RESTIC_PASSWORD_FILE"
@@ -63,12 +64,12 @@ export XDG_CACHE_HOME="$CACHE_DIR"
 echo "system-backup: запускаю backup + retention (daily=$KEEP_DAILY weekly=$KEEP_WEEKLY monthly=$KEEP_MONTHLY)"
 
 export RESTIC_PASSWORD_FILE KEEP_DAILY KEEP_WEEKLY KEEP_MONTHLY
-backup_args=(--prune)
+backup_args=(--prune --backup-dir "$BACKUP_DIR")
 if [[ -n "$BACKUP_PROFILE" ]]; then
   [[ -r "$BACKUP_PROFILE" ]] || fail "backup profile недоступний: $BACKUP_PROFILE"
   backup_args+=(--config "$BACKUP_PROFILE")
 fi
-"$BACKUP_DIR/backup-system.sh" "${backup_args[@]}"
+"$CODE_DIR/backup-system.sh" "${backup_args[@]}"
 
 # backup-system.sh intentionally returns 0 for a concurrent-run skip. Only a
 # recorded success is allowed to invoke the callback; a skip must never lead

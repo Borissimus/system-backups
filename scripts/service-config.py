@@ -17,6 +17,7 @@ from pathlib import Path
 ALLOWED = {
     "schema_version",
     "backup_dir",
+    "code_dir",
     "backup_mount",
     "backup_disk_uuid",
     "backup_profile",
@@ -38,9 +39,11 @@ class ConfigError(ValueError):
 def path(value: object, name: str, *, allow_empty: bool = False) -> str:
     if allow_empty and value == "":
         return ""
-    if not isinstance(value, str) or not value.startswith("/") or "\x00" in value:
+    if not isinstance(value, str) or not value.startswith("/") or any(ord(c) < 32 or ord(c) == 127 for c in value) or ".." in Path(value).parts:
         raise ConfigError(f"{name} must be an absolute path")
-    return value.rstrip("/") or "/"
+    if value != (value.rstrip("/") or "/"):
+        raise ConfigError(f"{name} must not have a trailing slash")
+    return value
 
 
 def load(filename: str) -> dict:
@@ -48,7 +51,10 @@ def load(filename: str) -> dict:
     if not file.is_file():
         raise ConfigError(f"service config file not found: {file}")
     try:
-        config = json.loads(file.read_text(encoding="utf-8"))
+        config = json.loads("\n".join(
+            "" if line.lstrip().startswith("//") else line
+            for line in file.read_text(encoding="utf-8").splitlines()
+        ))
     except json.JSONDecodeError as exc:
         raise ConfigError(f"invalid JSON in {file}: {exc}") from exc
     if not isinstance(config, dict):
@@ -61,19 +67,20 @@ def load(filename: str) -> dict:
 
 
 def validate(config: dict) -> None:
-    required = ALLOWED - {"backup_profile"}
+    required = ALLOWED - {"backup_profile", "code_dir"}
     missing = required - set(config)
     if missing:
         raise ConfigError(f"missing keys: {', '.join(sorted(missing))}")
-    if config["schema_version"] != 1:
+    if type(config["schema_version"]) is not int or config["schema_version"] != 1:
         raise ConfigError("only schema_version 1 is supported")
     backup_dir = path(config["backup_dir"], "backup_dir")
     backup_mount = path(config["backup_mount"], "backup_mount")
-    if backup_dir != backup_mount and not backup_dir.startswith(backup_mount + "/"):
+    if backup_dir != backup_mount and not backup_dir.startswith(backup_mount.rstrip("/") + "/"):
         raise ConfigError("backup_dir must be inside backup_mount")
     uuid = config["backup_disk_uuid"]
-    if not isinstance(uuid, str) or not uuid or any(c in uuid for c in "\t\n\x00"):
+    if not isinstance(uuid, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", uuid):
         raise ConfigError("backup_disk_uuid must be a non-empty single-line UUID")
+    path(config.get("code_dir", backup_dir), "code_dir")
     profile = config.get("backup_profile", "")
     path(profile, "backup_profile", allow_empty=True)
     if not isinstance(config["schedule"], str) or not SCHEDULE.fullmatch(config["schedule"]):
@@ -84,6 +91,8 @@ def validate(config: dict) -> None:
     for key, value in retention.items():
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
             raise ConfigError(f"retention.{key} must be a non-negative integer")
+    if not any(retention.values()):
+        raise ConfigError("at least one retention count must be positive")
     free = config["min_repository_free_gib"]
     if not isinstance(free, int) or isinstance(free, bool) or free < 0:
         raise ConfigError("min_repository_free_gib must be a non-negative integer")
@@ -95,6 +104,7 @@ def validate(config: dict) -> None:
 
 def export(config: dict) -> None:
     values = {
+        "CODE_DIR": config.get("code_dir", config["backup_dir"]),
         "BACKUP_DIR": config["backup_dir"],
         "BACKUP_MOUNT": config["backup_mount"],
         "BACKUP_DISK_UUID": config["backup_disk_uuid"],

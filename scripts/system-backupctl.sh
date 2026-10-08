@@ -7,7 +7,7 @@ NOTICE=/var/lib/system-backup/failure-notice
 
 usage() {
   cat <<'EOF'
-Usage: scripts/system-backupctl.sh COMMAND
+Usage: scripts/system-backupctl.sh COMMAND [OPTIONS]
 
 Commands:
   install       Install/update files; timer stays disabled
@@ -24,7 +24,7 @@ EOF
 
 command=${1:-}
 case "$command" in
-  install) exec sudo bash "$REPO_DIR/scripts/install-system-backup.sh" ;;
+  install) shift; exec bash "$REPO_DIR/scripts/install-system-backup.sh" "$@" ;;
   enable) sudo systemctl enable --now system-backup.timer ;;
   disable) sudo systemctl disable --now system-backup.timer ;;
   run) sudo systemctl start system-backup.service ;;

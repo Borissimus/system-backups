@@ -1,6 +1,6 @@
-# Systemd automation (work in progress)
+# Автономний backup через systemd
 
-Ця гілка додає автономний щоденний запуск backup (типово о 20:00). Сон машини,
+Служба виконує автономний щоденний backup (типово о 20:00). Сон машини,
 Wake-on-LAN і BIOS RTC **навмисно не реалізовані**: їх буде додано лише після
 окремого тесту апаратного пробудження.
 
@@ -13,15 +13,32 @@ Wake-on-LAN і BIOS RTC **навмисно не реалізовані**: їх �
 - `scripts/system-backup-after-success.sh` — безпечна callback-заглушка.
 - `scripts/system-backupctl.sh` — інсталяція, ручний запуск і контроль.
 
-## Порядок безпечного ввімкнення
+## Повне налаштування
+
+Після створення конфігів:
 
 ```bash
-# 0. Backup-диск вже змонтований через /etc/fstab за UUID (див. нижче).
-#    За потреби відредагуйте backup-config.json перед install.
+sudo bash scripts/setup-system-backup.sh --config "$PWD/configs/service-config.json"
+```
+
+Скрипт готує mount, залежності, службу, пароль і restic-репозиторій,
+виконує перший backup та вмикає таймер лише після успіху. Для backup без
+увімкнення таймера додайте `--no-enable`. Повторний запуск зберігає
+наявні пароль і repository та виконує ще один backup. Деталі — у
+[README.md](README.md#34-налаштування-одним-скриптом).
+
+## Ручне ввімкнення
+
+Підготовка нової машини та команди `restic init` / `--dry-run` наведені
+в [README.md](README.md#3-налаштування-на-новій-машині).
+
+```bash
+# 0. Backup-диск змонтований через /etc/fstab за UUID.
+#    Конфіги створені, а restic repository підготовлений за README.md.
 
 # 1. Встановити файли і root-only пароль, але не вмикати timer.
-#    Якщо service-config.json ще немає, installer сам збере mount і UUID.
-scripts/system-backupctl.sh install
+#    Для нового repository після install виконайте restic init за README.md.
+scripts/system-backupctl.sh install --config "$PWD/configs/service-config.json"
 
 # 2. Виконати один запуск як service та оглянути журнал
 scripts/system-backupctl.sh run
@@ -62,6 +79,7 @@ Backup-диск має монтуватися systemd через `/etc/fstab`, �
 UUID=<backup_disk_uuid> <backup_mount> ext4 defaults,nosuid,nodev,nofail,x-systemd.device-timeout=10s,x-systemd.mount-timeout=30s 0 2
 ```
 
-Інсталятор генерує `RequiresMountsFor` з `backup_mount` у JSON.
+Інсталятор генерує `Requires` та `After` для mount unit із `backup_mount`
+у JSON (шлях екранується через `systemd-escape`).
 Тому якщо диск підключили вже після boot, service все одно спробує змонтувати
 його перед backup; якщо диска немає, спрацює звичайний failure-notice.

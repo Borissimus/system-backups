@@ -7,3 +7,9 @@ restic/
 backup-history.log
 backup-config.json
 service-config.json
+
+__pycache__/
+
+# User configuration: only documented examples are versioned.
+configs/*
+!configs/*.example.jsonc

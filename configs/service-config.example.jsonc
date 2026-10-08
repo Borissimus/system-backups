@@ -1,0 +1,41 @@
+// Service settings. Copy to configs/service-config.jsonc and replace placeholders.
+// Validate with: python3 scripts/service-config.py validate --config configs/service-config.jsonc
+// Setup with: sudo bash scripts/setup-system-backup.sh --config configs/service-config.jsonc
+// Only // comments on their own lines are supported. No inline/block comments.
+{
+  "schema_version": 1,
+  // Absolute path to this project's code; it need not be on the backup disk.
+  // If omitted, old configs use backup_dir as the code directory.
+  "code_dir": "/home/USER/software_projects/system-backups",
+  // Storage directory inside backup_mount. Contains restic/, metadata and history.
+  "backup_dir": "/backup/system/system-backups",
+  // Mount of an already formatted ext4/XFS/Btrfs backup filesystem.
+  // Setup adds it to fstab if needed; it never formats a disk.
+  "backup_mount": "/backup/system",
+  // Filesystem UUID from lsblk -o NAME,FSTYPE,UUID,MOUNTPOINTS.
+  // Checked before each backup to reject a wrong disk or an empty mount directory.
+  "backup_disk_uuid": "PUT-BACKUP-DISK-UUID-HERE",
+  // Absolute path to your profile. It is read anew at every backup.
+  // An empty string selects built-in auto defaults, not a local config file.
+  "backup_profile": "/home/USER/software_projects/system-backups/configs/backup-config.jsonc",
+  // Local HH:MM, 24-hour format. Missed runs are not caught up after boot.
+  "schedule": "20:00",
+  // Counts retained per backup type and host; at least one must be positive.
+  // These are calendar retention rules, not an exact total snapshot count.
+  "retention": {
+    "daily": 7,
+    "weekly": 4,
+    "monthly": 6
+  },
+  // Service refuses to start below this amount of free space on the backup disk.
+  "min_repository_free_gib": 20,
+  // Password itself never belongs in this config. Installer creates a root-only
+  // file interactively if absent; existing repositories need their original password.
+  "restic_password_file": "/etc/system-backup/restic.pass",
+  // Executable hook called only on a successful backup, never on a skipped run.
+  // The shipped hook logs success; it does not suspend or wake the machine.
+  "success_callback": "/usr/local/lib/system-backup/after-success",
+  // Desktop user whose interactive Bash displays persistent failure notices.
+  // Empty string falls back to SUDO_USER during installation.
+  "notice_user": "USER"
+}

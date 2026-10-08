@@ -12,6 +12,7 @@
 #   sudo bash backup-system.sh --config backup-config.json
 #   sudo bash backup-system.sh --print-plan               # no repository write
 #   sudo bash backup-system.sh --prune                    # apply retention
+#   Add --backup-dir /mnt/backup/system-backups for storage separate from code.
 #
 # Concurrency: a flock-based lock (.backup.lock) makes a second, overlapping
 # invocation (e.g. cron + a manual run) exit immediately instead of racing
@@ -35,10 +36,7 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
-REPO="$SCRIPT_DIR/restic"
-META="$SCRIPT_DIR/recovery-metadata"
-LOCK_FILE="$SCRIPT_DIR/.backup.lock"
-HISTORY_FILE="$SCRIPT_DIR/backup-history.log"
+BACKUP_DIR="$SCRIPT_DIR"
 CONFIG_HELPER="$SCRIPT_DIR/scripts/backup-config.py"
 
 DRY_RUN=0
@@ -50,6 +48,12 @@ while [[ $# -gt 0 ]]; do
     --dry-run) DRY_RUN=1 ;;
     --prune)   PRUNE=1 ;;
     --print-plan) PRINT_PLAN=1 ;;
+    --backup-dir)
+      shift
+      [[ $# -gt 0 && "$1" == /* ]] || { echo "--backup-dir requires an absolute path" >&2; exit 2; }
+      BACKUP_DIR=$(realpath -m -- "$1")
+      [[ "$BACKUP_DIR" != / ]] || { echo "--backup-dir must not be /" >&2; exit 2; }
+      ;;
     --config)
       shift
       [[ $# -gt 0 ]] || { echo "--config requires a file path" >&2; exit 2; }
@@ -60,6 +64,11 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+REPO="$BACKUP_DIR/restic"
+META="$BACKUP_DIR/recovery-metadata"
+LOCK_FILE="$BACKUP_DIR/.backup.lock"
+HISTORY_FILE="$BACKUP_DIR/backup-history.log"
 
 SNAP_MOUNT=/mnt/root-backup-snapshot
 SNAP_LV_NAME=""
@@ -132,9 +141,10 @@ human_bytes() { numfmt --to=iec-i --suffix=B "$1" 2>/dev/null || echo "${1}B"; }
 
 load_profile() {
   [[ -x "$CONFIG_HELPER" ]] || die "Відсутній JSON config helper: $CONFIG_HELPER"
-  local key value
+  local key value config_values
   local -a config_args=()
   [[ -n "$BACKUP_CONFIG" ]] && config_args=(--config "$BACKUP_CONFIG")
+  config_values=$(python3 "$CONFIG_HELPER" export "${config_args[@]}") || die "Не вдалося завантажити backup profile"
   while IFS=$'\t' read -r key value; do
     case "$key" in
       ROOT_SNAPSHOT_MODE|ENCRYPTION_MODE|BOOT_MODE|HOME_MODE|HOME_PATH|HOME_SNAPSHOT_MODE)
@@ -142,7 +152,7 @@ load_profile() {
         ;;
       *) die "Невідомий ключ з JSON config helper: $key" ;;
     esac
-  done < <(python3 "$CONFIG_HELPER" export "${config_args[@]}")
+  done <<< "$config_values"
   [[ -n "$ROOT_SNAPSHOT_MODE" && -n "$HOME_MODE" ]] || die "Не вдалося завантажити backup profile"
 }
 
@@ -160,7 +170,7 @@ cleanup() {
   unset RESTIC_PASSWORD
   if [[ $ec -ne 0 ]]; then
     echo "Скрипт завершився з помилкою (код $ec) на кроці: $CURRENT_STEP" >&2
-    history_log failed "exit_code=$ec"
+    [[ $PRINT_PLAN -eq 1 || $DRY_RUN -eq 1 ]] || history_log failed "exit_code=$ec"
   fi
   exit $ec
 }
@@ -170,11 +180,13 @@ trap cleanup EXIT
 # одночасно — інакше обидва спробують створити той самий LVM snapshot і
 # зіткнуться в restic-локах репозиторію. Не блокуємось в очікуванні:
 # просто виходимо, наступний тригер (за розкладом) спробує пізніше.
-exec 200>"$LOCK_FILE"
-if ! flock -n 200; then
-  echo "Інший запуск backup-system.sh вже триває (лок $LOCK_FILE зайнятий) — пропускаю цей запуск." >&2
-  history_log skipped "reason=already_running"
-  exit 0
+if [[ $PRINT_PLAN -eq 0 && $DRY_RUN -eq 0 ]]; then
+  exec 200>"$LOCK_FILE"
+  if ! flock -n 200; then
+    echo "Інший запуск backup-system.sh вже триває — пропускаю цей запуск." >&2
+    history_log skipped "reason=already_running"
+    exit 0
+  fi
 fi
 
 # Унікальне ім'я не перетинається зі старим ручним snapshot'ом і дає змогу
@@ -188,7 +200,9 @@ SNAP_LV_NAME="root-backup-snapshot-${RUN_TAG#run-}"
 SNAP_MOUNT="/mnt/root-backup-snapshot"
 
 CURRENT_STEP="verify_repo"
-[[ -d "$REPO" && -f "$REPO/config" ]] || die "Не знайдено restic репозиторій: $REPO"
+if [[ $PRINT_PLAN -eq 0 ]]; then
+  [[ -d "$REPO" && -f "$REPO/config" ]] || die "Не знайдено restic репозиторій: $REPO"
+fi
 load_profile
 echo "Backup profile: ${BACKUP_CONFIG:-built-in defaults}"
 
@@ -215,6 +229,8 @@ fi
 
 if (( ROOT_IS_LVM )); then
   PV_NAME=$(pvs --noheadings -o pv_name --select "vg_name=$VG_NAME" | head -1 | tr -d ' ')
+  PV_COUNT=$(pvs --noheadings -o pv_name --select "vg_name=$VG_NAME" | awk 'NF {n++} END {print n+0}')
+  [[ "$PV_COUNT" -eq 1 ]] || die "VG $VG_NAME містить кілька PV; цей storage layout поки не підтримується"
   [[ -n "$PV_NAME" ]] || die "Не вдалося визначити PV для VG $VG_NAME"
   BACKING_SOURCE="$PV_NAME"
 else
@@ -247,7 +263,7 @@ if [[ -z "$DISK" ]]; then
 fi
 [[ -n "$DISK" ]] || die "Не вдалося визначити фізичний диск під $DISK_SOURCE"
 
-BOOT_SRC=$(findmnt -no SOURCE /boot) || die "Не вдалося визначити пристрій /boot"
+BOOT_SRC=$(findmnt -no SOURCE --target /boot) || die "Не вдалося визначити пристрій /boot"
 ESP_SRC=""
 if findmnt -M /boot/efi >/dev/null 2>&1; then
   ESP_SRC=$(findmnt -no SOURCE /boot/efi)
@@ -266,8 +282,8 @@ case "$HOME_MODE" in
     ;;
 esac
 if (( HOME_SEPARATE )); then
-  HOME_DISK=$(lsblk -no PKNAME -d "$HOME_SOURCE" 2>/dev/null | head -1)
-  if [[ -z "$HOME_DISK" && "$(lsblk -no TYPE "$HOME_SOURCE" 2>/dev/null)" == disk ]]; then
+  HOME_DISK=$(lsblk -no PKNAME -d "$HOME_SOURCE" 2>/dev/null | head -1 || true)
+  if [[ -z "$HOME_DISK" && "$(lsblk -no TYPE "$HOME_SOURCE" 2>/dev/null || true)" == disk ]]; then
     HOME_DISK=$(basename "$HOME_SOURCE")
   fi
 fi
@@ -292,8 +308,8 @@ fi
 if (( USE_LVM_SNAPSHOT )); then
   CURRENT_STEP="snapshot_sizing"
   log "Розрахунок розміру LVM snapshot"
-  VG_FREE_G=$(LC_ALL=C vgs --noheadings --units g -o vg_free "$VG_NAME" | tr -d ' g')
-  LV_SIZE_G=$(LC_ALL=C lvs --noheadings --units g -o lv_size "$VG_NAME/$LV_NAME" | tr -d ' g')
+  VG_FREE_G=$(LC_ALL=C vgs --noheadings --units g -o vg_free "$VG_NAME" | tr -d ' g<>')
+  LV_SIZE_G=$(LC_ALL=C lvs --noheadings --units g -o lv_size "$VG_NAME/$LV_NAME" | tr -d ' g<>')
   SNAP_SIZE_G=$(python3 -c "
 free=$VG_FREE_G; lv=$LV_SIZE_G
 want=max(5.0, lv*0.2)
@@ -312,9 +328,10 @@ fi
 
 if [[ $PRINT_PLAN -eq 1 ]]; then
   log "Backup plan (нічого не змінено)"
+  echo "repository: $REPO"
   echo "root: $([[ $USE_LVM_SNAPSHOT -eq 1 ]] && echo lvm-snapshot || echo live-filesystem)"
   echo "encryption: $([[ $LUKS_ENABLED -eq 1 ]] && echo luks || echo none)"
-  echo "boot: $([[ $HAS_ESP -eq 1 ]] && echo uefi || echo no-separate-esp)"
+  echo "boot: mode=$BOOT_MODE, esp=$HAS_ESP"
   if (( HOME_SEPARATE )); then
     echo "home: $HOME_MODE ($HOME_PATH on $HOME_SOURCE)"
   else
@@ -357,14 +374,23 @@ log "Оновлення recovery-metadata"
 mkdir -p "$META"
 command -v sgdisk >/dev/null 2>&1 || die "Потрібна команда sgdisk для recovery-metadata"
 command -v sfdisk >/dev/null 2>&1 || die "Потрібна команда sfdisk для recovery-metadata"
-sgdisk --backup="$META/disk.gpt" "/dev/$DISK"
-sfdisk -d "/dev/$DISK" > "$META/disk.sfdisk"
-if [[ -n "$HOME_DISK" && "$HOME_DISK" != "$DISK" ]]; then
-  sgdisk --backup="$META/home-disk.gpt" "/dev/$HOME_DISK"
-  sfdisk -d "/dev/$HOME_DISK" > "$META/home-disk.sfdisk"
-else
-  rm -f "$META/home-disk.gpt" "$META/home-disk.sfdisk"
+# Whole-device filesystems legitimately have no partition table. Do not
+# manufacture an empty GPT backup or run sfdisk against such a device.
+ROOT_TABLE_TYPE=$(lsblk -dn -o PTTYPE "/dev/$DISK")
+HOME_TABLE_TYPE=""
+rm -f "$META/disk.gpt" "$META/disk.sfdisk" "$META/home-disk.gpt" "$META/home-disk.sfdisk"
+if [[ -n "$ROOT_TABLE_TYPE" ]]; then
+  [[ "$ROOT_TABLE_TYPE" != gpt ]] || sgdisk --backup="$META/disk.gpt" "/dev/$DISK"
+  sfdisk -d "/dev/$DISK" > "$META/disk.sfdisk"
 fi
+if [[ "$HOME_MODE" == restic && -n "$HOME_DISK" && "$HOME_DISK" != "$DISK" ]]; then
+  HOME_TABLE_TYPE=$(lsblk -dn -o PTTYPE "/dev/$HOME_DISK")
+  if [[ -n "$HOME_TABLE_TYPE" ]]; then
+    [[ "$HOME_TABLE_TYPE" != gpt ]] || sgdisk --backup="$META/home-disk.gpt" "/dev/$HOME_DISK"
+    sfdisk -d "/dev/$HOME_DISK" > "$META/home-disk.sfdisk"
+  fi
+fi
+export ROOT_TABLE_TYPE HOME_TABLE_TYPE
 blkid > "$META/blkid.txt"
 lsblk > "$META/lsblk.txt"
 if (( HAVE_LVM_TOOLS )); then
@@ -394,7 +420,7 @@ fi
 # Keep legacy names only for the already verified LVM-on-LUKS UEFI recovery
 # procedure. Other topologies must be restored from layout.json + the generic
 # names, rather than accidentally being treated as this machine's NVMe layout.
-if (( ROOT_IS_LVM && LUKS_ENABLED && HAS_ESP )); then
+if (( ROOT_IS_LVM && LUKS_ENABLED && HAS_ESP )) && [[ "$ROOT_TABLE_TYPE" == gpt ]]; then
   cp "$META/disk.gpt" "$META/nvme0n1.gpt"
   cp "$META/disk.sfdisk" "$META/nvme0n1.sfdisk"
   cp "$META/lvm-vg.conf" "$META/ubuntu-vg.conf"
@@ -404,6 +430,16 @@ else
     "$META/ubuntu-vg.conf" "$META/nvme0n1p3-luks-header.img"
 fi
 ROOT_BACKUP_PATH=$([[ $USE_LVM_SNAPSHOT -eq 1 ]] && printf '%s' "$SNAP_MOUNT" || printf '/')
+ROOT_FS_TYPE=$(findmnt -no FSTYPE /)
+BOOT_FS_TYPE=$(findmnt -no FSTYPE --target /boot)
+BOOT_SEPARATE=0
+findmnt -M /boot >/dev/null 2>&1 && BOOT_SEPARATE=1
+export ROOT_FS_TYPE BOOT_FS_TYPE BOOT_SEPARATE
+ROOT_FS_UUID=$(blkid -s UUID -o value "$ROOT_SRC")
+BOOT_FS_UUID=$(blkid -s UUID -o value "$BOOT_SRC")
+ESP_FS_UUID=""
+(( HAS_ESP == 0 )) || ESP_FS_UUID=$(blkid -s UUID -o value "$ESP_SRC")
+export ROOT_FS_UUID BOOT_FS_UUID ESP_FS_UUID
 export ROOT_IS_LVM LUKS_ENABLED HAS_ESP HOME_SEPARATE USE_LVM_SNAPSHOT
 export ROOT_SOURCE ROOT_BACKUP_PATH VG_NAME LV_NAME PV_NAME CRYPT_NAME LUKS_PART DISK BOOT_SRC ESP_SRC HOME_MODE HOME_PATH HOME_SOURCE HOME_DISK
 export ROOT_SNAPSHOT_MODE ENCRYPTION_MODE BOOT_MODE HOME_SNAPSHOT_MODE RUN_TAG
@@ -428,6 +464,8 @@ data = {
   },
   "root": {
     "source": os.environ["ROOT_SOURCE"],
+    "filesystem_uuid": os.environ["ROOT_FS_UUID"],
+    "filesystem_type": os.environ["ROOT_FS_TYPE"],
     "backup_path": os.environ["ROOT_BACKUP_PATH"],
     "lvm": yes("ROOT_IS_LVM"),
     "vg_name": os.environ["VG_NAME"] or None,
@@ -440,14 +478,19 @@ data = {
     "device": os.environ["LUKS_PART"] or None,
     "header_file": "luks-header.img" if yes("LUKS_ENABLED") else None,
   },
-  "disk": {"source_disk": "/dev/" + os.environ["DISK"], "sfdisk_file": "disk.sfdisk", "gpt_file": "disk.gpt"},
-  "boot": {"source": os.environ["BOOT_SRC"], "esp_source": os.environ["ESP_SRC"] or None, "efi": yes("HAS_ESP")},
+  "disk": {"source_disk": "/dev/" + os.environ["DISK"], "partition_table": os.environ["ROOT_TABLE_TYPE"] or None,
+           "sfdisk_file": "disk.sfdisk" if os.environ["ROOT_TABLE_TYPE"] else None,
+           "gpt_file": "disk.gpt" if os.environ["ROOT_TABLE_TYPE"] == "gpt" else None},
+  "boot": {"source": os.environ["BOOT_SRC"], "esp_source": os.environ["ESP_SRC"] or None, "efi": yes("HAS_ESP"),
+           "filesystem_uuid": os.environ["BOOT_FS_UUID"], "esp_uuid": os.environ["ESP_FS_UUID"] or None,
+           "filesystem_type": os.environ["BOOT_FS_TYPE"], "separate_mount": yes("BOOT_SEPARATE")},
   "home": {
     "mode": os.environ["HOME_MODE"], "path": os.environ["HOME_PATH"],
     "source": os.environ["HOME_SOURCE"] or None, "separate_mount": yes("HOME_SEPARATE"),
     "source_disk": "/dev/" + os.environ["HOME_DISK"] if os.environ["HOME_DISK"] else None,
-    "sfdisk_file": "home-disk.sfdisk" if os.environ["HOME_DISK"] and os.environ["HOME_DISK"] != os.environ["DISK"] else None,
-    "gpt_file": "home-disk.gpt" if os.environ["HOME_DISK"] and os.environ["HOME_DISK"] != os.environ["DISK"] else None,
+    "partition_table": os.environ["HOME_TABLE_TYPE"] or None,
+    "sfdisk_file": "home-disk.sfdisk" if os.environ["HOME_TABLE_TYPE"] else None,
+    "gpt_file": "home-disk.gpt" if os.environ["HOME_TABLE_TYPE"] == "gpt" else None,
     "snapshot": os.environ["HOME_SNAPSHOT_MODE"],
   },
   "files": {"lvm_config": "lvm-vg.conf" if yes("ROOT_IS_LVM") else None},
@@ -482,11 +525,11 @@ CURRENT_STEP="backup_root"
 log "restic backup: system-root ($ROOT_BACKUP_PATH) — без живого прогресу (--json), може виглядати як пауза"
 ROOT_JSON=$(mktemp); TMP_JSON_FILES+=("$ROOT_JSON")
 if (( USE_LVM_SNAPSHOT )); then
-  restic -r "$REPO" backup "$ROOT_BACKUP_PATH" --tag system-root --tag "$RUN_TAG" --json > "$ROOT_JSON"
+  restic -r "$REPO" backup "$ROOT_BACKUP_PATH" --exclude "$SNAP_MOUNT$BACKUP_DIR" --tag system-root --tag "$RUN_TAG" --json > "$ROOT_JSON"
 else
   # Do not cross into separately mounted filesystems. A separate /home is
   # either backed up below (mode=restic) or deliberately left external.
-  restic -r "$REPO" backup / --one-file-system --tag system-root --tag "$RUN_TAG" --json > "$ROOT_JSON"
+  restic -r "$REPO" backup / --exclude "$BACKUP_DIR" --one-file-system --tag system-root --tag "$RUN_TAG" --json > "$ROOT_JSON"
 fi
 read -r ROOT_ADDED ROOT_FILES_NEW ROOT_FILES_CHANGED ROOT_SNAPID < <(summarize_backup "$ROOT_JSON")
 echo "system-root: +$(human_bytes "$ROOT_ADDED") нових даних, нових/змінених файлів: $ROOT_FILES_NEW/$ROOT_FILES_CHANGED, snapshot $ROOT_SNAPID"
@@ -497,7 +540,7 @@ if [[ "$HOME_MODE" == restic ]]; then
   CURRENT_STEP="backup_home"
   log "restic backup: system-home ($HOME_PATH, live filesystem)"
   HOME_JSON=$(mktemp); TMP_JSON_FILES+=("$HOME_JSON")
-  restic -r "$REPO" backup "$HOME_PATH" --one-file-system \
+  restic -r "$REPO" backup "$HOME_PATH" --exclude "$BACKUP_DIR" --one-file-system \
     --tag system-home --tag "$RUN_TAG" --json > "$HOME_JSON"
   read -r HOME_ADDED HOME_FILES_NEW HOME_FILES_CHANGED HOME_SNAPID < <(summarize_backup "$HOME_JSON")
   HOME_BACKED_UP=1

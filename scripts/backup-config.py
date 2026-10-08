@@ -50,7 +50,10 @@ def load(path: str | None) -> tuple[dict, str]:
     if not file.is_file():
         raise ConfigError(f"config file not found: {file}")
     try:
-        raw = json.loads(file.read_text(encoding="utf-8"))
+        raw = json.loads("\n".join(
+            "" if line.lstrip().startswith("//") else line
+            for line in file.read_text(encoding="utf-8").splitlines()
+        ))
     except json.JSONDecodeError as exc:
         raise ConfigError(f"invalid JSON in {file}: {exc}") from exc
     if not isinstance(raw, dict):
@@ -71,18 +74,18 @@ def load(path: str | None) -> tuple[dict, str]:
 
 
 def validate(config: dict) -> None:
-    if config.get("schema_version") != 1:
+    if type(config.get("schema_version")) is not int or config.get("schema_version") != 1:
         raise ConfigError("only schema_version 1 is supported")
-    if config["root"]["snapshot_mode"] not in {"auto", "lvm", "live"}:
+    if not isinstance(config["root"]["snapshot_mode"], str) or config["root"]["snapshot_mode"] not in {"auto", "lvm", "live"}:
         raise ConfigError("root.snapshot_mode must be auto, lvm, or live")
-    if config["encryption"]["mode"] not in {"auto", "required", "none"}:
+    if not isinstance(config["encryption"]["mode"], str) or config["encryption"]["mode"] not in {"auto", "required", "none"}:
         raise ConfigError("encryption.mode must be auto, required, or none")
-    if config["boot"]["mode"] not in {"auto", "required", "none"}:
+    if not isinstance(config["boot"]["mode"], str) or config["boot"]["mode"] not in {"auto", "required", "none"}:
         raise ConfigError("boot.mode must be auto, required, or none")
-    if config["home"]["mode"] not in {"auto", "restic", "external", "exclude"}:
+    if not isinstance(config["home"]["mode"], str) or config["home"]["mode"] not in {"auto", "restic", "external", "exclude"}:
         raise ConfigError("home.mode must be auto, restic, external, or exclude")
     home_path = config["home"]["path"]
-    if not isinstance(home_path, str) or not home_path.startswith("/") or "\x00" in home_path:
+    if not isinstance(home_path, str) or not home_path.startswith("/") or any(ord(c) < 32 or ord(c) == 127 for c in home_path) or ".." in Path(home_path).parts or home_path == "/" or home_path.endswith("/"):
         raise ConfigError("home.path must be an absolute path")
     if config["home"]["snapshot_mode"] != "live":
         raise ConfigError("home.snapshot_mode currently supports only live")

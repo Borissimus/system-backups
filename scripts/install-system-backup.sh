@@ -4,22 +4,29 @@
 set -euo pipefail
 
 ENABLE=0
-case "${1:-}" in
-  "") ;;
-  --enable) ENABLE=1 ;;
-  -h|--help)
-    cat <<'EOF'
-Usage: sudo bash scripts/install-system-backup.sh [--enable]
+SERVICE_CONFIG=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --enable) ENABLE=1 ;;
+    --config)
+      shift
+      [[ $# -gt 0 ]] || { echo "--config requires a file" >&2; exit 2; }
+      SERVICE_CONFIG=$(realpath -- "$1")
+      ;;
+    -h|--help)
+      echo "Usage: sudo bash scripts/install-system-backup.sh [--config FILE] [--enable]"
+      exit 0 ;;
+    *) echo "Невідомий параметр: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
 
-Installs/updates the systemd units and helpers. It asks once for the Restic
-password if /etc/system-backup/restic.pass does not exist. Without --enable,
-the timer remains disabled; test with: system-backupctl run
-EOF
-    exit 0 ;;
-  *) echo "Невідомий параметр: $1" >&2; exit 2 ;;
-esac
-
-[[ $EUID -eq 0 ]] || exec sudo bash "$0" "$@"
+if [[ $EUID -ne 0 ]]; then
+  args=()
+  [[ -z "$SERVICE_CONFIG" ]] || args+=(--config "$SERVICE_CONFIG")
+  (( ENABLE == 0 )) || args+=(--enable)
+  exec sudo bash "$0" "${args[@]}"
+fi
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
@@ -27,7 +34,10 @@ LIB_DIR=/usr/local/lib/system-backup
 CONFIG_DIR=/etc/system-backup
 CONFIG="$CONFIG_DIR/service.json"
 LEGACY_CONFIG="$CONFIG_DIR/system-backup.conf"
-REPO_SERVICE_CONFIG="$REPO_DIR/service-config.json"
+REPO_SERVICE_CONFIG="${SERVICE_CONFIG:-$REPO_DIR/configs/service-config.json}"
+if [[ -n "$SERVICE_CONFIG" ]]; then
+  python3 "$SCRIPT_DIR/service-config.py" validate --config "$SERVICE_CONFIG"
+fi
 PASSWORD_FILE="$CONFIG_DIR/restic.pass"
 STATE_DIR=/var/lib/system-backup
 
@@ -44,13 +54,24 @@ install -m 0644 "$REPO_DIR/systemd/system-backup-failure.service" /etc/systemd/s
 # Keep the backup profile next to the backup code and repository. It contains
 # no password and is deliberately ignored by Git: each machine owns its
 # storage-layout decisions. The initial profile is safe auto-detection.
-if [[ ! -e "$REPO_DIR/backup-config.json" ]]; then
-  install -m 0644 "$REPO_DIR/backup-config.example.json" "$REPO_DIR/backup-config.json"
-  echo "Створено $REPO_DIR/backup-config.json"
+if [[ -z "$SERVICE_CONFIG" && ! -e "$REPO_DIR/configs/backup-config.json" ]]; then
+  install -d -m 0755 "$REPO_DIR/configs"
+  python3 - "$REPO_DIR/configs/backup-config.example.jsonc" "$REPO_DIR/configs/backup-config.json" <<'PYPROFILE'
+import json, sys
+from pathlib import Path
+lines = Path(sys.argv[1]).read_text().splitlines()
+profile = json.loads("\n".join(line for line in lines if not line.lstrip().startswith("//")))
+Path(sys.argv[2]).write_text(json.dumps(profile, indent=2) + "\n")
+PYPROFILE
+  chmod 0644 "$REPO_DIR/configs/backup-config.json"
+  echo "Створено $REPO_DIR/configs/backup-config.json"
 else
-  echo "Зберігаю наявний backup profile $REPO_DIR/backup-config.json"
+  echo "Використовую backup profile з service-конфігурації"
 fi
 
+if [[ -n "$SERVICE_CONFIG" && "$SERVICE_CONFIG" != "$CONFIG" ]]; then
+  install -m 0600 "$SERVICE_CONFIG" "$CONFIG"
+fi
 if [[ ! -e "$CONFIG" ]]; then
   if [[ -e "$REPO_SERVICE_CONFIG" ]]; then
     python3 "$LIB_DIR/service-config.py" validate --config "$REPO_SERVICE_CONFIG"
@@ -88,7 +109,7 @@ if [[ ! -e "$CONFIG" ]]; then
       callback="$(legacy_value SUCCESS_CALLBACK || true)"; callback="${callback:-/usr/local/lib/system-backup/after-success}"
       echo "Переношу параметри зі старого $LEGACY_CONFIG до JSON (старий файл не видаляю)."
     fi
-    python3 - "$CONFIG" "$REPO_DIR" "$backup_mount" "$backup_uuid" "$REPO_DIR/backup-config.json" \
+    python3 - "$CONFIG" "$REPO_DIR" "$backup_mount" "$backup_uuid" "$REPO_DIR/configs/backup-config.json" \
       "$retention_daily" "$retention_weekly" "$retention_monthly" "$minimum_free" "$password_path" "$callback" "${SUDO_USER:-}" <<'PY'
 import json, sys
 (
@@ -119,21 +140,36 @@ else
   echo "Зберігаю наявний конфіг $CONFIG"
 fi
 
-# Systemd cannot read JSON itself. Generate only the two unit properties that
-# must be known before ExecStart: the backup mount and the local schedule.
+# Systemd cannot read JSON itself. Generate mount dependencies and the
+# local schedule before ExecStart.
+config_values=$(python3 "$LIB_DIR/service-config.py" export --config "$CONFIG") || exit 2
 while IFS=$'\t' read -r key value; do
   case "$key" in
+    CODE_DIR) code_dir="$value" ;;
+    BACKUP_PROFILE) backup_profile="$value" ;;
     BACKUP_MOUNT) backup_mount="$value" ;;
     SCHEDULE) schedule="$value" ;;
     RESTIC_PASSWORD_FILE) password_path="$value" ;;
     NOTICE_USER) notice_user="$value" ;;
   esac
-done < <(python3 "$LIB_DIR/service-config.py" export --config "$CONFIG")
+done <<< "$config_values"
 : "${backup_mount:?service.json does not provide BACKUP_MOUNT}"
 : "${schedule:?service.json does not provide SCHEDULE}"
 : "${password_path:?service.json does not provide RESTIC_PASSWORD_FILE}"
+[[ -x "$code_dir/backup-system.sh" ]] || { echo "Не знайдено код у $code_dir" >&2; exit 2; }
+if [[ -n "$backup_profile" ]]; then
+  python3 "$code_dir/scripts/backup-config.py" validate --config "$backup_profile"
+fi
 install -d -m 0755 /etc/systemd/system/system-backup.service.d /etc/systemd/system/system-backup.timer.d
-printf '[Unit]\nRequiresMountsFor=%s\n' "$backup_mount" \
+escaped_mount=$(systemd-escape --path "$backup_mount")
+mount_unit="$escaped_mount.mount"
+# Unit values have their own escape rules and systemd percent specifiers.
+mount_unit=$(python3 - "$mount_unit" <<'PYUNIT'
+import sys
+print(sys.argv[1].replace('\\', '\\\\').replace('%', '%%').replace('"', '\\"'))
+PYUNIT
+)
+printf '[Unit]\nRequires=%s\nAfter=%s\n' "$mount_unit" "$mount_unit" \
   > /etc/systemd/system/system-backup.service.d/config.conf
 printf '[Timer]\nOnCalendar=\nOnCalendar=*-*-* %s:00\n' "$schedule" \
   > /etc/systemd/system/system-backup.timer.d/config.conf
