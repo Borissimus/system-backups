@@ -34,8 +34,8 @@ case "$command" in
     ;;
   logs) sudo journalctl -u system-backup.service -u system-backup-failure.service -e --no-pager ;;
   timer) systemctl list-timers system-backup.timer --all --no-pager ;;
-  notice) [[ -r "$NOTICE" ]] && cat "$NOTICE" || echo "Невирішених backup-помилок немає." ;;
-  acknowledge) sudo rm -f "$NOTICE" && echo "Failure notice прибрано." ;;
+  notice) [[ -r "$NOTICE" ]] && cat "$NOTICE" || echo "No unresolved backup failures." ;;
+  acknowledge) sudo rm -f "$NOTICE" && echo "Failure notice removed." ;;
   -h|--help|help|"") usage ;;
-  *) echo "Невідома команда: $command" >&2; usage >&2; exit 2 ;;
+  *) echo "Unknown command: $command" >&2; usage >&2; exit 2 ;;
 esac

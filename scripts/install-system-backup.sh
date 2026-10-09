@@ -16,7 +16,7 @@ while [[ $# -gt 0 ]]; do
     -h|--help)
       echo "Usage: sudo bash scripts/install-system-backup.sh [--config FILE] [--enable]"
       exit 0 ;;
-    *) echo "Невідомий параметр: $1" >&2; exit 2 ;;
+    *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
   shift
 done
@@ -64,9 +64,9 @@ profile = json.loads("\n".join(line for line in lines if not line.lstrip().start
 Path(sys.argv[2]).write_text(json.dumps(profile, indent=2) + "\n")
 PYPROFILE
   chmod 0644 "$REPO_DIR/configs/backup-config.json"
-  echo "Створено $REPO_DIR/configs/backup-config.json"
+  echo "Created $REPO_DIR/configs/backup-config.json"
 else
-  echo "Використовую backup profile з service-конфігурації"
+  echo "Using backup profile from service configuration"
 fi
 
 if [[ -n "$SERVICE_CONFIG" && "$SERVICE_CONFIG" != "$CONFIG" ]]; then
@@ -76,17 +76,17 @@ if [[ ! -e "$CONFIG" ]]; then
   if [[ -e "$REPO_SERVICE_CONFIG" ]]; then
     python3 "$LIB_DIR/service-config.py" validate --config "$REPO_SERVICE_CONFIG"
     install -m 0600 "$REPO_SERVICE_CONFIG" "$CONFIG"
-    echo "Скопійовано підготовлений $REPO_SERVICE_CONFIG до $CONFIG"
+    echo "Copied prepared $REPO_SERVICE_CONFIG to $CONFIG"
   else
     backup_mount=$(findmnt -no TARGET --target "$REPO_DIR") || {
-      echo "Не вдалося визначити mount backup-репозиторію $REPO_DIR" >&2; exit 1;
+      echo "Failed to detect backup repository mount for $REPO_DIR" >&2; exit 1;
     }
     mounted_source=$(findmnt -no SOURCE --target "$backup_mount") || {
-      echo "Не вдалося визначити пристрій mount $backup_mount" >&2; exit 1;
+      echo "Failed to detect mount device for $backup_mount" >&2; exit 1;
     }
     backup_uuid=$(blkid -s UUID -o value "$mounted_source" 2>/dev/null || true)
     [[ -n "$backup_uuid" ]] || {
-      echo "Не вдалося визначити UUID backup-диска $mounted_source" >&2; exit 1;
+      echo "Failed to detect backup disk UUID for $mounted_source" >&2; exit 1;
     }
 
     # A prior version used a root-only shell config. Read only its simple
@@ -107,7 +107,7 @@ if [[ ! -e "$CONFIG" ]]; then
       retention_monthly="$(legacy_value KEEP_MONTHLY || true)"; retention_monthly="${retention_monthly:-6}"
       minimum_free="$(legacy_value MIN_REPOSITORY_FREE_GIB || true)"; minimum_free="${minimum_free:-20}"
       callback="$(legacy_value SUCCESS_CALLBACK || true)"; callback="${callback:-/usr/local/lib/system-backup/after-success}"
-      echo "Переношу параметри зі старого $LEGACY_CONFIG до JSON (старий файл не видаляю)."
+      echo "Migrating settings from $LEGACY_CONFIG to JSON (old file preserved)."
     fi
     python3 - "$CONFIG" "$REPO_DIR" "$backup_mount" "$backup_uuid" "$REPO_DIR/configs/backup-config.json" \
       "$retention_daily" "$retention_weekly" "$retention_monthly" "$minimum_free" "$password_path" "$callback" "${SUDO_USER:-}" <<'PY'
@@ -134,10 +134,10 @@ with open(output, "w", encoding="utf-8") as f:
     f.write("\n")
 PY
     chmod 0600 "$CONFIG"
-    echo "Створено $CONFIG"
+    echo "Created $CONFIG"
   fi
 else
-  echo "Зберігаю наявний конфіг $CONFIG"
+  echo "Preserving existing config $CONFIG"
 fi
 
 # Systemd cannot read JSON itself. Generate mount dependencies and the
@@ -156,7 +156,7 @@ done <<< "$config_values"
 : "${backup_mount:?service.json does not provide BACKUP_MOUNT}"
 : "${schedule:?service.json does not provide SCHEDULE}"
 : "${password_path:?service.json does not provide RESTIC_PASSWORD_FILE}"
-[[ -x "$code_dir/backup-system.sh" ]] || { echo "Не знайдено код у $code_dir" >&2; exit 2; }
+[[ -x "$code_dir/backup-system.sh" ]] || { echo "Code not found at $code_dir" >&2; exit 2; }
 if [[ -n "$backup_profile" ]]; then
   python3 "$code_dir/scripts/backup-config.py" validate --config "$backup_profile"
 fi
@@ -176,18 +176,18 @@ printf '[Timer]\nOnCalendar=\nOnCalendar=*-*-* %s:00\n' "$schedule" \
 chmod 0644 /etc/systemd/system/system-backup.service.d/config.conf /etc/systemd/system/system-backup.timer.d/config.conf
 
 if [[ ! -e "$password_path" ]]; then
-  [[ -t 0 ]] || { echo "Потрібен інтерактивний ввід для Restic-пароля" >&2; exit 1; }
-  read -r -s -p "Restic password (буде збережено root-only): " password
+  [[ -t 0 ]] || { echo "Interactive input is required for the restic password" >&2; exit 1; }
+  read -r -s -p "Restic password (will be saved in a root-only file): " password
   echo
-  [[ -n "$password" ]] || { echo "Порожній пароль не прийнято" >&2; exit 1; }
+  [[ -n "$password" ]] || { echo "Empty password is not allowed" >&2; exit 1; }
   install -d -m 0700 "$(dirname -- "$password_path")"
   umask 077
   printf '%s\n' "$password" > "$password_path"
   unset password
   chmod 0600 "$password_path"
-  echo "Створено root-only файл пароля $password_path"
+  echo "Created root-only password file $password_path"
 else
-  echo "Зберігаю наявний файл пароля $password_path"
+  echo "Preserving existing password file $password_path"
 fi
 
 # The one persistent ~/.bashrc line only sources a generic display helper;
@@ -196,7 +196,7 @@ target_user=${notice_user:-${SUDO_USER:-}}
 if [[ -n "$target_user" && "$target_user" != root ]]; then
   target_home=$(getent passwd "$target_user" | cut -d: -f6)
   [[ -n "$target_home" ]] || {
-    echo "Користувача для notice_user не знайдено: $target_user" >&2; exit 1;
+    echo "notice_user account not found: $target_user" >&2; exit 1;
   }
   target_bashrc="$target_home/.bashrc"
   target_notice_dir="$target_home/.config/system-backup"
@@ -211,17 +211,17 @@ if [[ -n "$target_user" && "$target_user" != root ]]; then
       echo '[ -r "$HOME/.config/system-backup/shell-notice.sh" ] && . "$HOME/.config/system-backup/shell-notice.sh"'
     } >> "$target_bashrc"
     chown "$target_user:$(id -gn "$target_user")" "$target_bashrc"
-    echo "Додано універсальний failure-notice hook до $target_bashrc"
+    echo "Added generic failure-notice hook to $target_bashrc"
   fi
 else
-  echo "SUDO_USER не визначено: shell-notice hook не додано до ~/.bashrc"
+  echo "SUDO_USER is not set: shell-notice hook was not added to ~/.bashrc"
 fi
 
 systemctl daemon-reload
 if (( ENABLE )); then
   systemctl enable --now system-backup.timer
-  echo "Таймер увімкнено: щодня о $schedule. Перевірка: system-backupctl status"
+  echo "Timer enabled: daily at $schedule. Check: system-backupctl status"
 else
-  echo "Встановлено без увімкнення таймера. Спершу: system-backupctl run"
-  echo "Потім: system-backupctl enable"
+  echo "Installed without enabling the timer. First: system-backupctl run"
+  echo "Then: system-backupctl enable"
 fi

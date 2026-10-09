@@ -1,55 +1,56 @@
-# Відновлення системи з restic
+# System recovery from restic
 
-Це інструкція до `restore-system.sh`. Поточна реалізація відновлює
-**Ubuntu x86_64, UEFI, root ext4 на LVM усередині LUKS, окремий ext4 `/boot`
-та FAT32 EFI**. Відновлення виконується на явно вибраний цілий диск,
-усі дані якого буде стерто після підтвердження.
+This is the guide for `restore-system.sh`. The current implementation restores
+**Ubuntu x86_64, UEFI, ext4 root on LVM inside LUKS, a separate ext4 `/boot`,
+and FAT32 EFI**. Recovery targets an explicitly selected whole disk.
+All data on that disk is erased after confirmation.
 
-Стан реалізації: 2026-10-09 успішно відновлено бекап
-`run-20261008-230002` на PLEXTOR PX-256M6S+ 256 GB із працюючої Ubuntu.
-Після від’єднання оригінального системного диска відновлена ОС завантажилась:
-root на новому LUKS/LVM, boot/EFI на PLEXTOR, зовнішній home підключений;
-failed units немає, backup timer disabled/inactive. Перевірений режим:
-усі identifiers generate, luks_header new, dracut, Secure Boot вимкнений.
-Відновлення з Live USB, original identifiers та старий LUKS header ще
-не перевірені фізично. Перед кожним restore виконайте dry-run і звірте план.
+Validation status: on 2026-10-09, backup `run-20261008-230002` was restored onto
+a PLEXTOR PX-256M6S+ 256 GB disk from a running Ubuntu system. After disconnecting
+the original system disk, the restored OS booted successfully: root on the new
+LUKS/LVM, boot/EFI on PLEXTOR, and external home connected. There were no failed
+units; the backup timer was disabled/inactive. Tested settings: all identifiers
+`generate`, `luks_header=new`, dracut, Secure Boot disabled.
+Live USB recovery, original identifiers, and restoring an old LUKS header have
+not yet been tested on hardware. Run dry-run and review the plan before each restore.
 
-## Де виконувати
+## Where to run recovery
 
-Можна підготувати новий диск із поточної Ubuntu, залишивши оригінальну
-систему працювати, якщо вибрані UUID і назви VG/mapping не конфліктують.
-Альтернатива — Ubuntu Live USB. Для першого завантаження з відновленого
-диска рекомендовано від'єднати оригінальний системний диск; окремий
-`/home`, якщо він потрібний відновленій ОС, залишити підключеним.
+You can prepare a new disk from the running Ubuntu system while keeping the
+original system online, provided UUIDs and VG/mapping names do not conflict.
+Alternatively, use an Ubuntu Live USB. For the first boot of the restored disk,
+disconnect the original system disk. Leave a separate `/home` connected if the
+restored OS needs it.
 
-Restore не використовує host mount `/mnt/root-backup-snapshot`, не
-деактивує чужі VG та не прибирає чужі mappings. Зайнятий цільовий диск
-(будь-який mount, swap або активний storage mapping) відхиляється.
-GRUB встановлюється тільки на ESP цільового диска з `--no-nvram` та
-fallback loader `EFI/BOOT/BOOTX64.EFI`; записи й порядок завантаження
-поточної firmware не змінюються. Для першого тесту Secure Boot має бути
-вимкнений; реалізація відхиляє host зі встановленим прапорцем Secure Boot.
+Restore does not reuse the host's `/mnt/root-backup-snapshot`, deactivate
+unrelated VGs, or remove unrelated mappings. A target disk with any mount,
+swap, or active storage mapping is rejected. GRUB is installed only on the
+target ESP using `--no-nvram` and the fallback loader `EFI/BOOT/BOOTX64.EFI`.
+Existing firmware entries and boot order remain unchanged. Secure Boot must
+be disabled for this recovery path; the script rejects a host whose Secure
+Boot flag is enabled.
 
-## Що підготувати
+## What to prepare
 
-- Підключений диск із restic-репозиторієм, змонтований, наприклад, у
-  `/backup/system`; storage-каталог — `/backup/system/system-backups`.
-- Код цього проєкту, доступний також із Live USB, якщо обраний цей спосіб.
-- Пароль restic: він потрібний окремо від зашифрованого репозиторію.
-- Новий диск та його точний serial. Розмір може відрізнятися від джерела:
-  план перевіряє обсяг даних, boot-розділи, filesystem overhead і резерв VG.
+- A connected disk containing the restic repository, mounted for example at
+  `/backup/system`, with storage at `/backup/system/system-backups`.
+- This project's code, accessible from the Live USB if using one.
+- The restic password, available separately from the encrypted repository.
+- A target disk and its exact serial. Its size may differ from the source;
+  the plan checks data size, boot partitions, filesystem overhead, and VG reserve.
 
-Залежності host (скрипт не встановлює пакети автоматично):
+Host dependencies are not installed automatically:
 
 ```bash
 sudo apt update
 sudo apt install python3 restic lvm2 cryptsetup gdisk dosfstools util-linux
 ```
 
-У відновленій Ubuntu мають бути dracut або `initramfs-tools` із
-`cryptsetup-initramfs`, а також GRUB EFI; скрипт виконує їх через chroot після копіювання.
+The restored Ubuntu must contain dracut or `initramfs-tools` with
+`cryptsetup-initramfs`, plus GRUB EFI. The script runs them inside chroot after
+restoring files.
 
-Перевірте диски й сховище:
+Inspect disks and storage:
 
 ```bash
 lsblk -o NAME,TYPE,SIZE,FSTYPE,UUID,MOUNTPOINTS,MODEL,SERIAL
@@ -57,14 +58,15 @@ ls -l /dev/disk/by-id/
 findmnt --mountpoint /backup/system
 ```
 
-## Створення restore-конфігу
+## Creating a recovery configuration
 
-Backup-конфіг описує вихідну систему. Ціль, її ідентифікатори й спосіб
-створення LUKS задаються **окремим** restore-конфігом у `configs/`, поза Git.
-Детальний приклад: [configs/restore-config.example.jsonc](configs/restore-config.example.jsonc).
-Підтримуються JSON та `//` коментарі на окремих рядках.
+The backup config describes the source system. The target, its identifiers,
+and LUKS header mode belong to a **separate** recovery config in `configs/`,
+ignored by Git. See the annotated
+[configs/restore-config.example.jsonc](configs/restore-config.example.jsonc).
+Plain JSON and separate-line `//` comments are supported.
 
-Інтерактивний майстер лише створює конфіг, не змінює диски:
+The interactive wizard only creates a config; it does not change disks:
 
 ```bash
 sudo bash restore-system.sh --interactive \
@@ -72,13 +74,12 @@ sudo bash restore-system.sh --interactive \
   --config "$PWD/configs/restore-config.json"
 ```
 
-Він показує незмонтовані цілі, просить вибір диска, режим ідентифікаторів,
-спосіб роботи з LUKS header, host/run бекапу та шлях до password-файлу.
-Serial вибраного диска записується в конфіг. Наявний конфіг не перезаписується.
-Оскільки майстер запущений із sudo, файл буде root-owned із mode 0600.
-Редагуйте його через `sudoedit`.
+It lists unmounted targets and asks for a disk, identifier mode, LUKS header
+mode, backup host/run, and password-file path. The disk serial is saved in the
+config. Existing configs are not overwritten. Since the wizard runs with sudo,
+the file is root-owned with mode 0600; use `sudoedit` to edit it.
 
-Або скопіюйте й заповніть приклад вручну:
+Alternatively, copy and edit the example:
 
 ```bash
 cp configs/restore-config.example.jsonc configs/restore-config.jsonc
@@ -86,116 +87,113 @@ nano configs/restore-config.jsonc
 python3 scripts/restore-config.py validate --config configs/restore-config.jsonc
 ```
 
-Обов'язково задайте `target.device` і точний `target.serial`. Бажано
-використовувати стабільний `/dev/disk/by-id/...`, що посилається на
-**диск**, а не `...-part1`. На кожному запуску перевіряються serial,
-тип пристрою, розмір, WWN та відсутність використання цілі системою.
+Set `target.device` and the exact `target.serial`. Prefer a stable
+`/dev/disk/by-id/...` link to the **whole disk**, not `...-part1`. Every run
+checks serial, device type, size, WWN, and whether the target is in use.
 
-## Ідентифікатори
+## Identifiers
 
-Для кожного поля `identifiers` допустимі:
+Each field in `identifiers` accepts:
 
-| Значення | Поведінка |
-|----------|-----------|
-| `original` | Взяти значення з metadata вибраного backup-run; це default |
-| `generate` | Згенерувати нове значення й зафіксувати його в журналі restore |
-| Власне значення | Використати його після перевірки формату та конфліктів |
+| Value | Behavior |
+|-------|----------|
+| `original` | Use metadata from the selected backup run; the default |
+| `generate` | Generate a new value and save it in the recovery journal |
+| Explicit value | Use it after format and conflict checks |
 
-Поля: UUID LUKS, root, boot та EFI, назви VG, LV і відкритого LUKS mapping.
-EFI UUID — FAT volume ID виду `A1B2-C3D4`, а не 128-бітний UUID.
-UUID PV/VG/LV усередині LVM створюються свіжими самим LVM; поля `vg_name`
-та `lv_name` керують назвами, не внутрішніми LVM UUID.
+Fields cover LUKS, root, boot, and EFI UUIDs, plus VG, LV, and open LUKS mapping
+names. EFI UUID is a FAT volume ID such as `A1B2-C3D4`, not a 128-bit UUID.
+LVM itself creates fresh internal PV/VG/LV UUIDs. `vg_name` and `lv_name`
+control names, not internal LVM UUIDs.
 
-**Для відновлення поруч із поточною системою виберіть `generate` для всіх
-полів.** LV може мати стару назву в іншій VG, але нова назва теж підтримується.
-Режим `original` призначений для заміни, коли оригінальний диск від'єднаний.
-Скрипт не ігнорує конфлікти: UUID перевіряються на всіх видимих block devices,
-включно незмонтованими, VG — через LVM, mapping — також через `/dev/mapper`.
-Ідентифікатори всередині закритого стороннього LUKS контейнера недоступні;
-якщо оригінальний LUKS-диск підключений, його стару VG не дозволено повторно
-використовувати навіть коли вона прихована за закритим контейнером.
+**For recovery beside the running source system, select `generate` for all
+fields.** An LV can reuse its old name in another VG, but new names are also
+supported. `original` is intended for replacement with the original disk
+disconnected. Conflicts are not ignored: UUIDs are checked on all visible block
+devices, including unmounted ones; VGs are checked through LVM, and mappings
+through `/dev/mapper`. Identifiers inside closed unrelated LUKS containers
+are inaccessible. If the original LUKS disk is connected, its old VG name
+cannot be reused even when hidden behind a closed container.
 
-## Паролі та LUKS header
+## Passwords and LUKS headers
 
-Пароль restic відкриває сховище. Задайте `restic_password_file` або лишіть
-порожній рядок для запиту; нативні `RESTIC_PASSWORD*` теж підтримуються.
-Паролі не записуються в restore-конфіг чи журнал.
+The restic password opens the repository. Set `restic_password_file` or leave
+it empty to be prompted. Native `RESTIC_PASSWORD*` variables are also supported.
+Passwords are never saved in the recovery config or journal.
 
 `luks_header`:
 
-- `new` (default): створити новий LUKS2 контейнер із запитаним новим паролем;
-- `restore`: використати header зі snapshot metadata, зберігши оригінальні
-  ключі й пароль. Це вибір користувача, а не обов'язкова умова file restore.
+- `new` (default): create a new LUKS2 container and prompt for a new passphrase.
+- `restore`: use the header from the metadata snapshot, preserving the original
+  keys and passphrase. This is optional for file restoration.
 
-В обох режимах target LUKS UUID визначається полем `identifiers.luks_uuid`.
-Після створення/restoring header скрипт знову попросить LUKS пароль для
-відкриття контейнера. Для `restore` потрібен старий пароль джерела.
+In both modes, `identifiers.luks_uuid` determines the target LUKS UUID. After
+creating or restoring the header, the script asks again for the LUKS passphrase
+to open the container. `restore` requires the source's old passphrase.
 
-## Dry-run і вибір бекапу
+## Dry-run and backup selection
 
 ```bash
 sudo bash restore-system.sh \
   --config "$PWD/configs/restore-config.json" --dry-run
 ```
 
-Для вручну заповненого JSONC підставте `configs/restore-config.jsonc`.
-Dry-run читає сховище, тимчасово витягує metadata й перевіряє план;
-**цільовий диск не змінюється**, журнал restore не створюється.
-На час перевірки/відновлення береться `.backup.lock`, щоб локальна
-backup-служба не працювала одночасно. Не запускайте prune із інших
-машин під час відновлення.
+Use `configs/restore-config.jsonc` instead if you edited the JSONC example.
+Dry-run reads the repository, extracts metadata into a temporary directory,
+and validates the plan. **The target disk is unchanged** and no recovery
+journal is created. `.backup.lock` is held during checks and recovery to block
+concurrent local backup runs. Do not prune the repository from other machines
+during recovery.
 
-`backup_run=latest` вибирає останній **повний узгоджений запуск**, де є
-рівно по одному root, boot і metadata snapshot із тим самим host/run тегом.
-Незавершений новіший запуск пропускається; незалежні «latest root» і
-«latest boot» не змішуються. Для кількох hosts обов'язково задайте
-`backup_host`. Для точного запуску задайте `run-YYYYMMDD-HHMMSS`.
+`backup_run=latest` selects the latest **complete, coherent run** containing
+exactly one root, boot, and metadata snapshot with the same host/run tag.
+Newer incomplete runs are skipped; independently selected latest root and
+boot snapshots are never mixed. Set `backup_host` when there are multiple
+hosts, or specify `run-YYYYMMDD-HHMMSS` to select one exact run.
 
-Metadata, включно backup/service конфігами, читаються **зі snapshot**
-цього запуску, а не з локального змінюваного `recovery-metadata/`.
-Старі snapshots без archived конфігів можуть працювати, якщо `layout.json`
-містить потрібну топологію, UUID та поля filesystem. Старий бекап без
-`layout.json` новий restore не підтримує.
+Metadata, including backup/service configs, comes **from that run's snapshot**,
+not the mutable local `recovery-metadata/` directory. Older snapshots without
+archived configs can work if `layout.json` includes the required topology,
+UUIDs, and filesystem fields. Backups without `layout.json` are not supported.
 
-План показує точні snapshot IDs, ціль/serial/WWN/розмір, resolved UUID і
-назви, обсяг root та стан окремого `/home`. Переконайтеся, що ціль — новий
-диск, а не root, home, swap чи backup-диск.
+The plan shows exact snapshot IDs, target/serial/WWN/size, resolved identifiers,
+root data size, and separate `/home` status. Confirm that the target is the
+intended recovery disk, not root, home, swap, or the backup disk.
 
-## Запуск
+## Running recovery
 
-Після успішного dry-run:
+After a successful dry-run:
 
 ```bash
 sudo bash restore-system.sh --config "$PWD/configs/restore-config.json"
 ```
 
-Перед змінами потрібно ввести **`ERASE <serial>`**. Після цього ідентичність
-диска й конфлікти перевіряються повторно. Операції:
+Before any changes, enter **`ERASE <serial>`**. Disk identity and conflicts are
+then checked again. The script performs:
 
-1. Нова GPT: ESP 1 GiB, `/boot` 2 GiB, LUKS — решта диска.
-2. LUKS, PV/VG і root LV; default LV займає 90% вільного VG.
-3. FAT32 ESP, ext4 boot/root із вибраними UUID.
-4. Відновлення конкретних root/boot snapshots через restic з `--verify`.
-   Subfolder restore пише прямо на ціль, без подвійної копії root.
-5. Заміна root/boot/EFI записів у target `fstab`, формування target `crypttab`
-   із `luks,initramfs`, оновлення явних kernel/EFI config посилань.
-   Зовнішні `/home`/swap mounts зберігаються; їхні пристрої потрібні окремо.
-6. Прибирання старих LVM devices/cache прив'язок і resume налаштувань.
-7. Regenerate initramfs із перевіркою embedded cryptroot UUID, GRUB на
-   target ESP без NVRAM змін; os-prober вимкнений у відновленій ОС.
-8. Розмонтування тільки створених цим запуском mounts, деактивація тільки
-   target VG та закриття тільки target mapping.
+1. New GPT: 1 GiB ESP, 2 GiB `/boot`, and LUKS in the remaining space.
+2. LUKS, PV/VG, and root LV; the LV uses 90% of free VG space by default.
+3. FAT32 ESP and ext4 boot/root with selected UUIDs.
+4. Restore pinned root/boot snapshots with restic `--verify`. Subfolder restore
+   writes directly to the target without a second root copy.
+5. Replace target root/boot/EFI `fstab` entries, create target `crypttab` with
+   `luks,initramfs`, and update explicit kernel/EFI config references. External
+   home/swap mount entries are preserved; their devices must be available separately.
+6. Remove stale LVM device/cache bindings and resume settings.
+7. Regenerate initramfs and verify the embedded target crypttab UUID; install
+   GRUB on the target ESP without NVRAM changes. Disable os-prober in the restored OS.
+8. Unmount only mounts created by this run, deactivate only the target VG,
+   and close only the target mapping.
 
-Backup timer **у відновленій ОС** лишається вимкненим. Після її першого
-завантаження звірте service/backup конфіги й виконайте setup окремо.
-Таймер поточної host ОС скрипт не переналаштовує; запуск backup під час
-restore пропускається через lock.
+The backup timer **in the restored OS** stays disabled. After its first boot,
+review service/backup configs and run setup separately. The host OS timer is
+not reconfigured; backup attempts during recovery are skipped through the lock.
 
-## Журнал і продовження
+## Journal and resume
 
-Журнал — `<backup_dir>/.restore-state.json`, mode 0600. Він прив'язаний до
-hash restore-конфігу, disk identity, точних snapshot IDs і resolved
-ідентифікаторів. Згенеровані UUID під час resume не змінюються.
+The journal is `<backup_dir>/.restore-state.json`, mode 0600. It binds the
+config hash, disk identity, exact snapshot IDs, and resolved identifiers.
+Generated UUIDs remain unchanged during resume.
 
 ```bash
 sudo bash restore-system.sh --config "$PWD/configs/restore-config.json" --status
@@ -203,37 +201,36 @@ sudo bash restore-system.sh --config "$PWD/configs/restore-config.json" --resume
 sudo bash restore-system.sh --config "$PWD/configs/restore-config.json" --resume
 ```
 
-Після збою повторюйте з `--resume`, не звичайним запуском. Завершені
-partition/LUKS/LVM/filesystem кроки перевіряються; невідповідність зупиняє
-restore, не викликає повторне стирання. Файловий крок, який не встиг
-завершитися, виконується знову на вже підготовленій цілі.
-Після SIGKILL чи вимкнення живлення mappings/mounts можуть залишитися;
-їх треба оглянути й закрити вручну. Скрипт не робить force teardown.
+After a failure, use `--resume`, not a fresh run. Completed partition/LUKS/LVM/
+filesystem steps are checked; mismatches stop recovery instead of triggering
+another erase. An interrupted file-copy step is repeated on the prepared target.
+After SIGKILL or power loss, mappings/mounts may remain. Inspect and close them
+manually; the script does not force teardown.
 
-Для іншої цілі або нового restore-конфігу архівуйте старий журнал вручну
-лише після огляду диска. Автоматичного `--reset` зі стиранням немає.
+For another target or a new config, archive the old journal manually only
+after inspecting the disk. There is no automatic destructive `--reset`.
 
-## Перший реальний тест
+## First hardware test
 
-1. Підключіть новий диск; звірте model/serial/size.
-2. Створіть конфіг із `generate` для всіх identifiers, `luks_header=new`.
-3. Виконайте dry-run; надішліть план для перевірки перед запуском.
-4. Виконайте restore й перевірте фінальний стан та cleanup.
-5. Вимкніть машину, від'єднайте оригінальний системний диск, завантажтеся
-   з нового через firmware boot menu. Зовнішній `/home` лишіть підключеним.
-6. Перевірте LUKS prompt, boot, login, `findmnt`, `lsblk -f`, `vgs`,
-   `journalctl -b -p err`. Лише це підтвердить end-to-end recovery.
+1. Connect the target disk and verify model/serial/size.
+2. Create a config with all identifiers `generate` and `luks_header=new`.
+3. Run dry-run and review the plan before proceeding.
+4. Run recovery and inspect the final status and cleanup.
+5. Shut down, disconnect the original system disk, and boot the restored disk
+   using the firmware boot menu. Leave external `/home` connected.
+6. Check the LUKS prompt, boot, login, `findmnt`, `lsblk -f`, `vgs`, and
+   `journalctl -b -p err`. These checks confirm end-to-end recovery.
 
-Окремий `/home`, навіть коли snapshot `system-home` є в тому самому repo,
-інші LV та інші окремі filesystems цей механізм не відновлює. Їх відновлення
-потребує окремої цілі/процедури. Secure Boot, TPM unlock, RAID і інші
-root layouts цим restore не підтримуються.
+A separate `/home`, even if a `system-home` snapshot exists in the same
+repository, other LVs, and other separate filesystems are not restored by this
+process. They need a separate target/procedure. Secure Boot, TPM unlock, RAID,
+and other root layouts are not supported by this recovery implementation.
 
-### Initramfs із dracut
+### Initramfs with dracut
 
-Для Ubuntu із dracut restore створює generic initramfs без host-only
-command line працюючої ОС, включає crypt/LVM і target crypttab, задає
-цільові rd.luks.uuid та rd.lvm.lv для GRUB. Перевірка UUID підтримує
-обидва layouts: dracut etc/crypttab та initramfs-tools cryptroot/crypttab.
-Після помилки на bootloader-кроці продовжуйте тим самим конфігом через
-`--resume`: завершені partition/format/root/boot кроки не повторюються.
+For Ubuntu using dracut, recovery builds a generic initramfs without capturing
+the running host's command line. It includes crypt/LVM and the target crypttab,
+and sets target `rd.luks.uuid` and `rd.lvm.lv` for GRUB. UUID verification
+supports both dracut `etc/crypttab` and initramfs-tools `cryptroot/crypttab`.
+After a bootloader-step failure, use the unchanged config with `--resume`;
+completed partition/format/root/boot steps are not repeated.

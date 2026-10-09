@@ -10,7 +10,7 @@ NOTICE="$STATE_DIR/failure-notice"
 
 mkdir -p -m 0755 "$STATE_DIR"
 
-backup_dir="(конфіг ще не доступний)"
+backup_dir="(configuration not yet available)"
 if [[ -r "$CONFIG" && -x "$CONFIG_HELPER" ]]; then
   while IFS=$'\t' read -r key value; do
     [[ "$key" == BACKUP_DIR ]] && backup_dir="$value"
@@ -19,31 +19,31 @@ fi
 
 tmp=$(mktemp "$STATE_DIR/.failure-notice.XXXXXX")
 {
-  echo "⚠️  Останній автоматичний system backup завершився з помилкою."
-  echo "Час фіксації: $(date -Iseconds)"
+  echo "⚠️  The last automatic system backup failed."
+  echo "Recorded at: $(date -Iseconds)"
   echo
-  echo "Стан служби:"
+  echo "Service status:"
   echo "  sudo systemctl status system-backup.service --no-pager"
-  echo "Журнал служби:"
+  echo "Service journal:"
   echo "  sudo journalctl -u system-backup.service -e --no-pager"
   echo
-  echo "Останні рядки systemd journal (доступні без backup-диску):"
+  echo "Recent systemd journal entries (available without the backup disk):"
   journalctl -u system-backup.service -n 16 --no-pager --output=short-iso 2>&1 || \
-    echo "  Не вдалося прочитати journal. Див. команду вище."
+    echo "  Could not read the journal. See the command above."
   echo
   if [[ -r "$backup_dir/backup-history.log" ]]; then
-    echo "Журнал backup:"
+    echo "Backup history:"
     echo "  tail -n 20 $backup_dir/backup-history.log"
     echo
-    echo "Останній запис:"
+    echo "Latest entry:"
     tail -n 1 "$backup_dir/backup-history.log"
   else
-    echo "backup-history.log недоступний: backup-диск не змонтований або шлях відсутній."
-    echo "Після повернення диска:"
+    echo "backup-history.log unavailable: backup disk is not mounted or the path is missing."
+    echo "After reconnecting the disk:"
     echo "  tail -n 20 $backup_dir/backup-history.log"
   fi
   echo
-  echo "Після перегляду приберіть це повідомлення:"
+  echo "After reviewing, remove this notice:"
   echo "  system-backupctl acknowledge"
 } > "$tmp"
 chmod 0644 "$tmp"

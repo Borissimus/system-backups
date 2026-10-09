@@ -1,51 +1,48 @@
-# system-backups — резервне копіювання та відновлення
+# system-backups — backup and recovery
 
-Цей каталог — самодостатній комплект для backup системи через
-[restic](https://restic.net/). `backup-system.sh` підтримує LVM-on-LUKS і
-простіші root-схеми; для поточного, перевіреного LVM-on-LUKS UEFI профілю є
-інструкція recovery в [RECOVERY.md](RECOVERY.md). Нижче — створення
-конфігів і запуск на новій машині. Деталі полів профілю — у
-[CONFIGURATION.md](CONFIGURATION.md), керування службою — у
-[AUTOMATION.md](AUTOMATION.md).
+This directory is a self-contained toolkit for system backups with
+[restic](https://restic.net/). `backup-system.sh` supports LVM-on-LUKS and
+simpler root layouts. Recovery for the tested LVM-on-LUKS UEFI profile is
+described in [RECOVERY.md](RECOVERY.md). This document covers configuration
+and setup on a new machine. See [CONFIGURATION.md](CONFIGURATION.md) for
+profile fields and [AUTOMATION.md](AUTOMATION.md) for service management.
 
-Новий механізм відновлення підготовлений для Ubuntu x86_64, LVM-on-LUKS/UEFI із LVM snapshot,
-окремим `/boot` та ext4 для root/boot. Інші підтримувані схеми можна
-бекапити, але їх відновлення потребує окремої процедури. Окремий `/home`
-також відновлюється окремо через restic. 2026-10-09 перевірено відновлення на фізичний диск
-із новими UUID/LUKS header і успішне завантаження ОС (dracut).
-Сценарії Live USB, original UUID та старий header ще не перевірені фізично.
+Recovery supports Ubuntu x86_64 with LVM-on-LUKS/UEFI, an LVM snapshot,
+a separate `/boot`, and ext4 root/boot. Other supported layouts can be backed
+up but require their own recovery procedure. A separate `/home` must also be
+restored separately with restic. Physical-disk recovery with new UUIDs and a
+new LUKS header, followed by successful OS boot with dracut, was verified on
+2026-10-09. Live USB, original UUIDs, and old-header recovery have not yet
+been tested on hardware.
 
-## Зміст проєкту
+## Project contents
 
-| Файл/каталог              | Призначення |
-|----------------------------|-------------|
-| `restic/`                  | Сам restic-репозиторій (зашифрований, content-addressed) |
-| `recovery-metadata/`       | GPT/LUKS-заголовок/LVM-конфіг оригінального диска — оновлюється щобекапу |
-| `backup-system.sh`         | Створення нового бекапу (цей документ) |
-| `restore-system.sh`        | Повне відновлення на новий диск |
-| `scripts/setup-system-backup.sh` | Повне налаштування за готовими конфігами та перший backup |
-| `scripts/configure-system-backup.py` | Створення узгоджених backup/service конфігів |
-| `configs/backup-config.example.jsonc` | Приклад profile root/LUKS/boot/home для конкретної машини |
-| `configs/service-config.example.jsonc` | Приклад JSON-параметрів systemd-служби без секретів |
-| `backup-history.log`       | Журнал історії запусків `backup-system.sh` (створюється автоматично) |
-| `.backup.lock`             | Lock-файл проти паралельних запусків (створюється автоматично) |
-| `.restore-state.json` | Журнал restore, прив’язаний до цілі та snapshot IDs |
-| `configs/restore-config.example.jsonc` | Restore-профіль: ціль, UUID/назви та LUKS header |
+| File/directory | Purpose |
+|----------------|---------|
+| `restic/` | Encrypted, content-addressed restic repository |
+| `recovery-metadata/` | Source GPT/LUKS header/LVM config, refreshed with each backup |
+| `backup-system.sh` | Create a new backup; documented here |
+| `restore-system.sh` | Full recovery onto a target disk |
+| `scripts/setup-system-backup.sh` | Complete setup from prepared configs and first backup |
+| `scripts/configure-system-backup.py` | Generate matching backup/service configs |
+| `configs/backup-config.example.jsonc` | Annotated root/LUKS/boot/home profile example |
+| `configs/service-config.example.jsonc` | Systemd service settings example without secrets |
+| `backup-history.log` | Run history, created automatically |
+| `.backup.lock` | Lock against concurrent runs, created automatically |
+| `.restore-state.json` | Recovery journal bound to a target and snapshot IDs |
+| `configs/restore-config.example.jsonc` | Recovery target, identifiers, and LUKS header settings |
 
-Код і сховище можуть лежати окремо. `restic/`, `recovery-metadata/`, журнал,
-lock і стан відновлення створюються в `backup_dir`; без `--backup-dir` —
-поруч зі скриптом. Локальні конфіги у `configs/` і дані сховища ігноруються Git.
-У `configs/` версіонуються лише `*.example.jsonc` — детальні приклади
-з коментарями `//` на окремих рядках. Валідатори й скрипти читають як
-звичайний JSON, так і цей формат; inline-коментарі та `/* ... */` не підтримуються.
-Робочий service-конфіг після інсталяції також зберігається у
-`/etc/system-backup/service.json`.
+Code and storage can be separate. `restic/`, `recovery-metadata/`, history,
+lock, and recovery state are created in `backup_dir`; without `--backup-dir`,
+they are created beside the script. Local configs in `configs/` and repository
+data are ignored by Git. Only annotated `*.example.jsonc` files are versioned
+in `configs/`. Validators and scripts accept plain JSON and `//` comments on
+separate lines; inline comments and `/* ... */` are not supported.
+The installed service config is `/etc/system-backup/service.json`.
 
----
+## Recovery onto a new disk
 
-## Відновлення на новий диск
-
-Створіть окремий restore-конфіг (після підключення нової цілі):
+After connecting the target, create a separate recovery config:
 
 ```bash
 sudo bash restore-system.sh --interactive \
@@ -54,66 +51,63 @@ sudo bash restore-system.sh --interactive \
 sudo bash restore-system.sh --config "$PWD/configs/restore-config.json" --dry-run
 ```
 
-Для відновлення поруч із поточною системою виберіть `generate` для всіх
-ідентифікаторів. Defaults `original` підходять для заміни з від'єднаним
-оригіналом. Скрипт читає metadata узгодженого run зі сховища, перевіряє
-serial/UUID/VG конфлікти й перед стиранням вимагає підтвердження.
-Команди запуску, resume, обмеження та план першого тесту — у
+For recovery beside the running source system, select `generate` for all
+identifiers. The `original` defaults suit replacement with the original disk
+disconnected. The script reads metadata from one complete backup run, checks
+serial/UUID/VG conflicts, and requires confirmation before erasing the target.
+Commands, resume, limitations, and the first-test procedure are in
 [RECOVERY.md](RECOVERY.md).
 
-## 1. Що робить `backup-system.sh`
+## 1. What `backup-system.sh` does
 
-Запускається **на вже встановленій і завантаженій системі** (не з Live
-USB — для цього є `restore-system.sh`). За один прогін:
+Run it **on an installed, running system**, not from a Live USB; use
+`restore-system.sh` for recovery. Each run:
 
-1. Автовизначає storage-конфігурацію (`/`, за наявності VG/LV і LUKS,
-   диск, `/boot`, `/boot/efi`) — імена дисків не хардкодяться. Profile у
-   `backup-config.json` може вимагати або забороняти окремі складники.
-2. Рахує безпечний розмір тимчасового LVM-снепшоту
-   (`min(вільне у VG − 1G, 20% розміру LV)`, мінімум 5G, інакше — явна
-   помилка з поясненням, скільки бракує).
-3. Оновлює `recovery-metadata/` (GPT, sfdisk, blkid, а за потреби LVM-конфіг,
-   LUKS header і metadata фізично окремого home-диска) — щоб recovery мав
-   актуальні дані, а не знімок з дня першого бекапу.
-4. Якщо root — LVM і профіль не вимагає `live`, створює LVM-снепшот кореня з унікальним іменем
-   `root-backup-snapshot-YYYYMMDD-HHMMSS` — **консистентна точка в часі**,
-   не повна копія; монтує його read-only у сталий шлях
-   `/mnt/root-backup-snapshot`.
-5. Викликами `restic backup` заливає корінь, `/boot`, свіжі
-   `recovery-metadata` і, якщо профіль так задає, окремий `/home`. Типи
-   мають теги `system-root` / `system-boot` / `recovery-metadata` /
-   `system-home` плюс унікальний `run-<timestamp>` на кожен прогін.
-   У snapshot metadata також входять фактично використаний backup-профіль
-   і, для запуску через службу, service-конфіг; пароль туди не копіюється.
-6. Прибирає снепшот, опційно застосовує retention (`--prune`), робить
-   швидку перевірку репозиторію (`restic check`, без читання даних).
+1. Detects the storage layout: `/`, optional VG/LV and LUKS, physical disk,
+   `/boot`, and `/boot/efi`. Device names are not hardcoded. The profile in
+   `backup-config.json` can require or disallow individual components.
+2. Calculates a safe temporary LVM snapshot size:
+   `min(free VG space - 1G, 20% of LV size)`, at least 5G. If space is
+   insufficient, it reports the shortage and fails.
+3. Refreshes `recovery-metadata/`: GPT, sfdisk, blkid, optional LVM config,
+   LUKS header, and metadata for an included separate home disk. Recovery
+   therefore uses current metadata rather than the first backup's layout.
+4. If root is on LVM and the profile does not request `live`, creates a
+   snapshot named `root-backup-snapshot-YYYYMMDD-HHMMSS`. This provides a
+   **consistent point in time**, not a full copy, and is mounted read-only
+   at the stable `/mnt/root-backup-snapshot` path.
+5. Runs `restic backup` for root, `/boot`, refreshed metadata, and optionally
+   separate `/home`. Tags are `system-root`, `system-boot`, `recovery-metadata`,
+   and `system-home`, with a shared unique `run-<timestamp>` tag. Metadata
+   includes the effective backup profile and, for service runs, the service
+   config. Password contents are never copied into those config snapshots.
+6. Removes the temporary snapshot, optionally applies retention (`--prune`),
+   and runs a quick repository check (`restic check`, without reading all data).
 
-## 2. Чому це не дублює дані щоразу
+## 2. Why each run does not duplicate all data
 
-- **restic — content-addressed сховище.** Кожен шматок даних (chunk)
-  зберігається один раз за хешем вмісту, незалежно від того, з якого
-  файлу/snapshot'у він прийшов. Навіть якщо parent snapshot не знайдено
-  (див. нижче), уже наявний за хешем блок ніколи не заливається вдруге.
-- **Автоматичний parent snapshot.** `restic backup <шлях>` сам шукає
-  останній snapshot з тим самим (hostname, шлях) і використовує його як
-  базу для швидкого визначення змінених файлів (за mtime+size, без
-  повного перечитування вмісту незмінених файлів). Для LVM snapshot шлях
-  `/mnt/root-backup-snapshot` сталий незалежно від імені тимчасового LV.
-- **LVM-снепшот — не повна копія.** Це лише copy-on-write шар для
-  консистентності на час бекапу (кілька хвилин); сам знімок займає лише
-  стільки місця, скільки даних змінилося ПІД ЧАС бекапу (звідси й
-  динамічний розрахунок розміру, а не фіксовані сотні гігабайт).
+- **Restic is content-addressed.** Each data chunk is stored once by its
+  content hash, regardless of the file or snapshot it came from. Existing
+  chunks are not uploaded again even if a parent snapshot cannot be found.
+- **Automatic parent snapshots.** `restic backup <path>` finds the latest
+  snapshot for the same host/path and uses it to identify changed files
+  quickly from metadata, avoiding a full reread of unchanged files. The LVM
+  snapshot mount path stays `/mnt/root-backup-snapshot` regardless of the
+  temporary LV name.
+- **LVM snapshots are not full copies.** They use copy-on-write storage for
+  consistency during the backup. Space usage depends on data changed during
+  the run, which explains the dynamic sizing instead of a fixed allocation
+  of hundreds of gigabytes.
 
-## 3. Налаштування на новій машині
+## 3. Setting up a new machine
 
-Виконуйте команди з кореня цього Git-проєкту. Приклад використовує
-`/backup/system` як mount backup-диска і `/backup/system/system-backups`
-як каталог сховища. Замініть їх своїми шляхами. Якщо будь-який крок
-завершився помилкою, усуньте її перед наступним.
+Run commands from the Git project root. The example uses `/backup/system`
+as the backup mount and `/backup/system/system-backups` as storage. Substitute
+your own paths. Resolve a failed step before proceeding.
 
-### 3.1 Залежності й схема системи
+### 3.1 Dependencies and system layout
 
-Для Ubuntu/Debian:
+For Ubuntu/Debian:
 
 ```bash
 sudo apt update
@@ -123,15 +117,15 @@ findmnt --target /
 findmnt --target /home
 ```
 
-Скрипт `setup-system-backup.sh` сам встановлює відсутні залежності.
-Для запуску генератора конфігів заздалегідь потрібні `python3` і util-linux.
-Python використовує лише стандартну бібліотеку: `venv` і `pip install`
-не потрібні. Служба запускає системний `python3`.
+`setup-system-backup.sh` installs missing dependencies itself. To run the
+config generator beforehand, install `python3` and util-linux. Python uses
+only the standard library; neither `venv` nor `pip install` is needed. The
+service uses the system `python3`.
 
-### 3.2 Backup-диск
+### 3.2 Backup disk
 
-Використовуйте вже підготовлений диск із filesystem. Визначте його UUID
-через `lsblk` вище та додайте до `/etc/fstab` рядок із **власним UUID**:
+Use a prepared disk with an existing filesystem. Find its UUID with `lsblk`
+and add an `/etc/fstab` entry using **your disk's UUID**:
 
 ```bash
 sudo mkdir -p /backup/system
@@ -143,7 +137,7 @@ sudoedit /etc/fstab
 UUID=<UUID_BACKUP_DISK> /backup/system ext4 defaults,nosuid,nodev,nofail,x-systemd.device-timeout=10s,x-systemd.mount-timeout=30s 0 2
 ```
 
-Приклад передбачає ext4 на backup-диску. Після редагування:
+This example assumes ext4. After editing:
 
 ```bash
 sudo systemctl daemon-reload
@@ -152,38 +146,38 @@ findmnt --mountpoint /backup/system
 df -h /backup/system
 ```
 
-Звірте source та UUID з вибраним диском. Служба також перевірятиме UUID
-перед кожним запуском.
+Verify the source and UUID against the selected disk. The service also checks
+the UUID before every run.
 
-### 3.3 Створення конфігів під систему
+### 3.3 Creating system configuration files
 
-Виберіть початковий профіль за фактичною схемою root:
+Choose an initial profile for the actual root layout:
 
-| `--profile` | Root backup | Шифрування під root | Boot |
-|-------------|-------------|--------------------|------|
-| `lvm-luks-uefi` | LVM snapshot | LUKS обов'язковий | ESP обов'язковий |
-| `lvm-plain` | LVM snapshot | LUKS має бути відсутній | auto |
-| `partition-luks` | live filesystem | LUKS обов'язковий | auto |
-| `partition-plain` | live filesystem | LUKS має бути відсутній | auto |
-| `auto` | LVM snapshot, якщо доступний; інакше live | автовизначення | auto |
+| `--profile` | Root backup | Encryption beneath root | Boot |
+|-------------|-------------|-------------------------|------|
+| `lvm-luks-uefi` | LVM snapshot | LUKS required | ESP required |
+| `lvm-plain` | LVM snapshot | LUKS must be absent | auto |
+| `partition-luks` | Live filesystem | LUKS required | auto |
+| `partition-plain` | Live filesystem | LUKS must be absent | auto |
+| `auto` | LVM snapshot when available, otherwise live | Auto-detect | auto |
 
-Профіль задає вимоги; скрипт перевіряє їх перед backup. Live backup не є
-атомарним знімком активно змінюваних даних. Обмеження storage-схем і
-деталі режимів описані в [CONFIGURATION.md](CONFIGURATION.md).
+The profile defines requirements checked before backup. Live backup is not an
+atomic snapshot of actively changing data. Storage limitations and mode
+details are in [CONFIGURATION.md](CONFIGURATION.md).
 
-Для `/home` виберіть:
+For `/home`, choose:
 
-- `--home auto`, якщо він на root filesystem: вже входить до root backup;
-- `--home restic`, щоб включити окремо змонтований `/home` у **той самий
-  restic-репозиторій**, окремим snapshot `system-home`;
-- `--home exclude`, щоб пропустити окремо змонтований `/home`;
-- `--home external`, якщо backup окремого `/home` ведеться іншою системою.
+- `--home auto` when it is on the root filesystem and already included.
+- `--home restic` to include a separate `/home` in **the same restic repository**
+  as a `system-home` snapshot.
+- `--home exclude` to skip a separately mounted `/home`.
+- `--home external` when another system backs up the separate `/home`.
 
-Важлива межа filesystem: окремий `/home` на тому самому фізичному диску
-теж потребує вибору. Якщо `/home` змонтований окремо, генератор вимагає
-явного `--home`; без вибору він не створить конфіги.
+The filesystem boundary matters: a separate `/home` partition on the same
+physical disk also requires a choice. For a separate home mount, the generator
+requires an explicit `--home` and will not create configs without it.
 
-Приклад: root у LVM усередині LUKS, UEFI, окремий `/home` пропускаємо:
+Example: LVM root inside LUKS, UEFI, and a separate `/home` excluded:
 
 ```bash
 python3 scripts/configure-system-backup.py \
@@ -201,71 +195,69 @@ cat configs/backup-config.json
 cat configs/service-config.json
 ```
 
-Генератор визначає UUID змонтованого backup-диска та створює:
+The generator detects the mounted disk UUID and creates:
 
-- `backup-config.json`: root/LUKS/boot/home;
-- `service-config.json`: шлях до коду, сховище, UUID, розклад і retention.
+- `backup-config.json`: root/LUKS/boot/home settings.
+- `service-config.json`: code path, storage, UUID, schedule, and retention.
 
-Наявні конфіги не перезаписуються. Для нового варіанта виберіть інший
-`--output-dir` або відредагуйте існуючі JSON та повторіть validate.
-Код може залишатися у вашому робочому каталозі. Генератор не створює
-restic-репозиторій і не встановлює службу.
+Existing configs are not overwritten. For another configuration, choose a
+different `--output-dir` or edit the JSON and validate it again. Code can stay
+in your working directory. The generator does not initialize restic or install
+the service.
 
-### 3.4 Налаштування одним скриптом
+### 3.4 Setup with one script
 
-Після створення та перевірки конфігів запустіть:
+After creating and validating configs:
 
 ```bash
 sudo bash scripts/setup-system-backup.sh --config "$PWD/configs/service-config.json"
 ```
 
-Це основний спосіб інсталяції. Скрипт:
+This is the primary installation method. It:
 
-1. Встановлює відсутні залежності через `apt-get` на Ubuntu/Debian.
-2. Перевіряє конфіги, пристрій і UUID backup-диска; додає запис у
-   `/etc/fstab`, якщо його немає, та монтує диск. Наявний запис того самого диска
-   робить необов’язковим (`nofail`) із обмеженим часом очікування. Перед зміною створює
-   `/etc/fstab.before-system-backup`; чужий запис для цього mount не змінює.
-3. Перевіряє вільне місце та план backup.
-4. Вимикає таймер на час налаштування, встановлює службові файли й
-   root-only пароль. Якщо пароля ще немає, запитує його інтерактивно.
-5. Ініціалізує новий restic-репозиторій; наявний зберігає. Непорожній
-   каталог без restic `config` потребує ручного огляду.
-6. Виконує `--dry-run`, перший backup через службу та перевіряє новий
-   запис `status=success` у журналі.
-7. Лише після успіху вмикає щоденний таймер за `schedule`.
+1. Installs missing dependencies with `apt-get` on Ubuntu/Debian.
+2. Checks configs, device, and UUID; adds an `/etc/fstab` entry when missing
+   and mounts the disk. Matching existing entries become optional (`nofail`)
+   with bounded timeouts. It saves `/etc/fstab.before-system-backup` before
+   changing fstab and refuses to replace conflicting entries.
+3. Checks free space and the backup plan.
+4. Disables the timer during setup, installs service files and a root-only
+   password file, and prompts for a password if none exists.
+5. Initializes a new restic repository or preserves an existing one. A
+   nonempty directory without restic `config` requires manual inspection.
+6. Runs `--dry-run`, the first service backup, and checks for a newly recorded
+   `status=success` in the history log.
+7. Enables the daily timer using `schedule` only after success.
 
-Форматування і розбиття диска не виконуються. Backup-диск має вже містити
-ext4, XFS або Btrfs і бути підключеним. Генератор конфігів потребує вже
-змонтованого диска; якщо диск змонтований файловим менеджером, можна
-використати цей mount у конфігу — setup додасть його до `fstab`. Для служби
-зручніше обрати постійний шлях, як у розділі 3.2.
+No formatting or partitioning is performed. The connected backup disk must
+already contain ext4, XFS, or Btrfs. Config generation requires a mounted disk;
+a mount created by a file manager can be used in the config, and setup adds it
+to fstab. A stable path as in section 3.2 is more convenient for the service.
 
-Повторний запуск застосовує переданий service-конфіг, зберігає пароль
-і репозиторій та виконує ще один backup. Він не дублює запис у `fstab`.
-Якщо налаштування падає після вимкнення таймера, таймер лишається вимкненим;
-усуньте причину й повторіть команду. Конфліктний mount чи `fstab` запис
-скрипт просить перевірити вручну.
+Repeated setup applies the supplied service config, preserves the password
+and repository, runs another backup, and does not duplicate the fstab entry.
+If setup fails after disabling the timer, it stays disabled; fix the cause
+and repeat the command. Conflicting mounts or fstab entries require review.
 
-Для інсталяції та першого backup без увімкнення розкладу:
+To install and run the first backup without enabling the schedule:
 
 ```bash
 sudo bash scripts/setup-system-backup.sh \
   --config "$PWD/configs/service-config.json" --no-enable
 ```
 
-Під час backup можна дивитися журнал в іншому терміналі:
+Follow the journal from another terminal during backup:
 
 ```bash
 sudo journalctl -u system-backup.service -f
 ```
 
-Після успіху переходьте до перевірок із розділу 3.7. Наступні два розділи
-містять ручний варіант тих самих дій для діагностики.
+After success, proceed to section 3.7. The next two sections describe the
+manual equivalent for troubleshooting.
 
-### 3.5 Ручне налаштування: план, пароль і репозиторій
+### 3.5 Manual setup: plan, password, and repository
 
-Перегляньте план до будь-якого backup, без пароля репозиторію:
+Inspect the plan before backup, without a repository password:
 
 ```bash
 sudo bash backup-system.sh \
@@ -274,30 +266,30 @@ sudo bash backup-system.sh \
   --print-plan
 ```
 
-Підготуйте каталог і встановіть службу без увімкнення таймера:
+Prepare storage and install the service without enabling the timer:
 
 ```bash
 sudo install -d -m 0700 /backup/system/system-backups
 sudo bash scripts/install-system-backup.sh --config "$PWD/configs/service-config.json"
 ```
 
-Інсталятор попросить пароль restic та збереже його у root-only файлі
-`/etc/system-backup/restic.pass`. Наявний файл пароля зберігається.
-Збережіть пароль також для відновлення. Інсталятор додає повідомлення
-про помилки до інтерактивного Bash користувача `notice_user`.
+The installer asks for the restic password and saves it in the root-only
+`/etc/system-backup/restic.pass`. An existing password file is preserved.
+Keep the password available for recovery as well. The installer adds a
+failure-notice hook to interactive Bash for `notice_user`.
 
-Лише для **нового** restic-репозиторію виконайте:
+Run this only for a **new** restic repository:
 
 ```bash
 sudo restic --password-file /etc/system-backup/restic.pass \
   -r /backup/system/system-backups/restic init
 ```
 
-Якщо використовуєте існуючий репозиторій, пропустіть `init` і використовуйте
-його пароль. Якщо змінили `restic_password_file` у service-конфігу,
-підставте відповідний шлях у команди restic нижче.
+For an existing repository, skip `init` and use its password. If you change
+`restic_password_file` in the service config, substitute that path in the
+restic commands below.
 
-### 3.6 Ручне налаштування: перевірка та перший backup
+### 3.6 Manual setup: validation and first backup
 
 ```bash
 sudo env RESTIC_PASSWORD_FILE=/etc/system-backup/restic.pass \
@@ -309,15 +301,15 @@ sudo env RESTIC_PASSWORD_FILE=/etc/system-backup/restic.pass \
 sudo systemctl start system-backup.service
 ```
 
-`--print-plan` і `--dry-run` не створюють lock або записів у журналі;
-`--dry-run` також перевіряє пароль і доступність репозиторію.
-`systemctl start` чекає завершення backup. В іншому терміналі:
+Backup `--print-plan` and `--dry-run` do not create a lock or history entries.
+Dry-run also checks the password and repository availability.
+`systemctl start` waits for the backup to finish. In another terminal:
 
 ```bash
 sudo journalctl -u system-backup.service -f
 ```
 
-Після завершення звірте `status=success` і snapshots:
+After completion, check `status=success` and snapshots:
 
 ```bash
 sudo tail -n 1 /backup/system/system-backups/backup-history.log
@@ -325,42 +317,41 @@ sudo restic --password-file /etc/system-backup/restic.pass \
   -r /backup/system/system-backups/restic snapshots
 ```
 
-Очікувані теги: `system-root`, `system-boot`, `recovery-metadata`;
-при `home.mode=restic` — також `system-home`. Усі snapshots одного запуску
-мають спільний `run-<timestamp>`.
+Expected tags: `system-root`, `system-boot`, `recovery-metadata`, and
+`system-home` when `home.mode=restic`. All snapshots from a run share one
+`run-<timestamp>` tag.
 
-### 3.7 Щоденний запуск і подальші перевірки
+### 3.7 Daily schedule and further checks
 
-Після успішного першого backup:
+After the first successful backup:
 
 ```bash
 sudo systemctl enable --now system-backup.timer
 systemctl list-timers system-backup.timer --all --no-pager
 ```
 
-Розклад задається локальним часом у `schedule`. Пропущений запуск не
-надолужується (`Persistent=false`). Служба `inactive (dead)` після
-успішного завершення — нормальний стан для `Type=oneshot`.
+`schedule` specifies local time. Missed runs are not caught up
+(`Persistent=false`). `inactive (dead)` after a successful run is normal for
+a `Type=oneshot` service.
 
-Повна перевірка даних, на додаток до звичайного `restic check`:
+To verify all data in addition to the usual `restic check`:
 
 ```bash
 sudo restic --password-file /etc/system-backup/restic.pass \
   -r /backup/system/system-backups/restic check --read-data
 ```
 
-Перевірка репозиторію не замінює тестового відновлення на інший диск.
-Після перегляду повідомлення про попередню помилку приберіть його командою
+Repository checks do not replace a recovery test on another disk. After
+reviewing a previous failure notice, remove it with
 `scripts/system-backupctl.sh acknowledge`.
 
-### 3.8 Зміна конфігів
+### 3.8 Editing configuration files
 
-Профіль за шляхом `backup_profile` читається при кожному запуску.
-Після редагування `backup-config.json` виконайте validate і `--print-plan`.
-Без `--config` скрипт використовує вбудований `auto`, навіть якщо локальний
-`backup-config.json` існує.
+The profile at `backup_profile` is loaded on every run. After editing
+`backup-config.json`, validate it and run `--print-plan`. Without `--config`,
+the script uses built-in `auto` defaults even if a local config exists.
 
-Після редагування локального `service-config.json` застосуйте його явно:
+Apply an edited local service config explicitly:
 
 ```bash
 python3 scripts/service-config.py validate --config configs/service-config.json
@@ -368,130 +359,121 @@ sudo bash scripts/install-system-backup.sh --config "$PWD/configs/service-config
 systemctl list-timers system-backup.timer --all --no-pager
 ```
 
-Робоча service-конфігурація — `/etc/system-backup/service.json`. Якщо
-редагуєте її безпосередньо, перевстановіть службу без `--config`:
+The active service config is `/etc/system-backup/service.json`. If editing
+it directly, reinstall without `--config`:
 
 ```bash
 sudoedit /etc/system-backup/service.json
 sudo bash scripts/install-system-backup.sh
 ```
 
-Інсталяція без `--enable` не вмикає новий таймер; уже увімкнений таймер
-залишається увімкненим. Код і файл профілю мають лишатися доступними за
-шляхами з service-конфігу.
+Installation without `--enable` does not enable a new timer; an already
+enabled timer stays enabled. Code and profile files must remain available
+at the configured paths.
 
-### Змінні середовища
+### Environment variables
 
-| Змінна | За замовчуванням | Призначення |
-|--------|-------------------|-------------|
-| `KEEP_DAILY` | `7` | Скільки денних snapshot'ів лишати при `--prune` |
-| `KEEP_WEEKLY` | `4` | Скільки тижневих |
-| `KEEP_MONTHLY` | `6` | Скільки місячних |
-| `RESTIC_PASSWORD` | — | Пароль репозиторію напряму (небезпечно в unit-файлах, див. §6) |
-| `RESTIC_PASSWORD_FILE` | — | Шлях до файлу з паролем (рекомендовано для автономного запуску) |
-| `RESTIC_PASSWORD_COMMAND` | — | Команда, що виводить пароль у stdout (інтеграція з менеджером секретів) |
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `KEEP_DAILY` | `7` | Daily snapshots retained with `--prune` |
+| `KEEP_WEEKLY` | `4` | Weekly snapshots retained |
+| `KEEP_MONTHLY` | `6` | Monthly snapshots retained |
+| `RESTIC_PASSWORD` | — | Direct repository password; avoid embedding in unit files |
+| `RESTIC_PASSWORD_FILE` | — | Password-file path; recommended for unattended runs |
+| `RESTIC_PASSWORD_COMMAND` | — | Command that outputs the password; secret-manager integration |
 
-Якщо жодна з трьох `RESTIC_PASSWORD*` змінних не задана — скрипт питає
-пароль інтерактивно (`read -rs`), як і раніше. Якщо задана — питання
-пропускається повністю (це і є вхідна точка для автономного сервісу).
+If none of the three `RESTIC_PASSWORD*` variables is set, the script prompts
+interactively with `read -rs`. If one is set, the prompt is skipped, allowing
+unattended service operation.
 
-## 4. Паралельні запуски (lock)
+## 4. Concurrent runs and locking
 
-Скрипт бере ексклюзивний `flock -n` на `.backup.lock` перед перевіркою
-репозиторію для реального запуску. Якщо лок зайнятий (інший запуск уже триває):
+Before repository checks in a real backup, the script acquires an exclusive
+`flock -n` on `.backup.lock`. If another run holds the lock:
 
-- нічого не робиться, диск не чіпається;
-- у `backup-history.log` пишеться рядок `status=skipped
-  reason=already_running`;
-- скрипт виходить з кодом **0** (це свідомо НЕ помилка — наступний тик
-  за розкладом просто спробує знову).
+- No backup is performed and storage devices are unchanged.
+- A history entry records `status=skipped reason=already_running`.
+- The script exits with **0**. This is an expected skip; the next scheduled
+  trigger can try again.
 
-Це страхує від сценарію "cron + ручний запуск одночасно" чи "попередній
-прогін ще не встиг завершити restic backup, а таймер уже спрацював
-знову".
+This prevents overlapping cron/manual runs or a new timer run while the
+previous backup is still active.
 
-Якщо живлення зникло під час backup і лишився LVM LV виду
-`root-backup-snapshot-YYYYMMDD-HHMMSS`, наступний запуск зупиниться до
-створення нового snapshot. Це навмисний захист: такий LV треба спершу
-оглянути й прибрати вручну, а не ризикувати автоматично видалити єдину
-консистентну копію. Старий LV з іншим іменем скрипт не чіпає.
+If power fails and leaves an LV named `root-backup-snapshot-YYYYMMDD-HHMMSS`,
+the next run stops before creating another snapshot. Inspect and remove the
+stale LV manually; automatic deletion could destroy a useful consistent copy.
+An older LV with a different name is not touched.
 
-## 5. Журнал історії запусків (`backup-history.log`)
+## 5. Run history (`backup-history.log`)
 
-Простий append-only текстовий формат `key=value`, по одному рядку на
-подію — навмисно НЕ JSON, щоб читати без залежностей (`grep`/`awk`/
-`cut`), хоча JSON-подібна регулярність (кожен ключ рівно один раз) не
-заважає й python-парсингу за потреби.
+An append-only `key=value` text format records one event per line. It can be
+read without dependencies using `grep`, `awk`, or `cut`, or parsed in Python.
 
-**Спільні поля в кожному рядку:** `ts` (ISO-8601), `tag` (RUN_TAG цього
-прогону, або `-` якщо ще не дійшли до цього кроку), `status`
-(`success`/`failed`/`skipped`), `duration_s` (секунди від старту
-скрипта), `step` (на якому кроці це сталося — для `failed` це буде
-реальне місце падіння).
+**Common fields:** `ts` (ISO-8601), `tag` (the run tag, or `-` before it exists),
+`status` (`success`/`failed`/`skipped`), `duration_s` (seconds since script start),
+and `step` (the current step, including the failure location).
 
-**Додаткові поля за статусом:**
+**Additional fields by status:**
 
 - `success`: `root_added`, `home_added`, `boot_added`, `meta_added`,
-  `total_added` (усі — байти), `root_snapshot`, `home_snapshot`,
-  `boot_snapshot`, `meta_snapshot`, `home_mode` і `pruned` (`yes`/`no`).
+  `total_added` (bytes), `root_snapshot`, `home_snapshot`, `boot_snapshot`,
+  `meta_snapshot`, `home_mode`, and `pruned` (`yes`/`no`).
 - `failed`: `exit_code`.
 - `skipped`: `reason=already_running`.
 
-Приклади:
+Examples:
 
-```
+```text
 ts=2026-09-17T06:15:32+03:00 tag=run-20260917-061532 status=success duration_s=142 step=done root_added=47185920 home_added=0 boot_added=2048 meta_added=8192 total_added=47196160 root_snapshot=abcd1234 home_snapshot=- boot_snapshot=ef567890 meta_snapshot=12ab34cd home_mode=auto pruned=no
 ts=2026-09-18T03:00:05+03:00 tag=- status=skipped duration_s=0 step=verify_repo reason=already_running
 ts=2026-09-19T03:00:12+03:00 tag=run-20260919-030012 status=failed duration_s=18 step=create_snapshot exit_code=1
 ```
 
-**Кроки (`step`), які можуть з'явитись у `failed`-рядку:** `verify_repo`,
-`detect_layout`, `snapshot_sizing`, `restic_password`, `refresh_metadata`,
-`create_snapshot`, `backup_root`, `backup_home`, `backup_boot`,
-`backup_metadata`, `remove_snapshot`, `prune`, `check_repo`.
+Possible failure steps: `verify_repo`, `detect_layout`, `snapshot_sizing`,
+`restic_password`, `refresh_metadata`, `create_snapshot`, `backup_root`,
+`backup_home`, `backup_boot`, `backup_metadata`, `remove_snapshot`, `prune`,
+and `check_repo`.
 
-Швидкі корисні запити для майбутнього сервісу/моніторингу:
+Useful queries for monitoring:
 
 ```bash
-# Останній рядок узагалі (успіх, невдача чи skip)
+# Latest event of any status.
 tail -1 backup-history.log
 
-# Останній РЕАЛЬНО успішний бекап
+# Latest successful backup.
 grep 'status=success' backup-history.log | tail -1
 
-# Скільки невдач за останній тиждень
+# Failures during the last week.
 awk -v since="$(date -d '7 days ago' -Iseconds)" '$1 > "ts="since' backup-history.log | grep -c 'status=failed'
 ```
 
-## 6. Автономний запуск через systemd
+## 6. Unattended operation with systemd
 
-Робоча служба, таймер, root-only пароль і failure notice вже реалізовані.
-Порядок підготовки диска, створення конфігів, ініціалізації restic та
-першого запуску наведено в розділі 3. Керування встановленою службою —
-у [AUTOMATION.md](AUTOMATION.md).
+The service, timer, root-only password, and failure notice are implemented.
+Section 3 covers disk preparation, configs, repository initialization, and
+first backup. Manage the installed service as described in
+[AUTOMATION.md](AUTOMATION.md).
 
-Timer не надолужує пропущений вечірній запуск (`Persistent=false`), а
-`OnFailure=` створює повідомлення для наступної інтерактивної Bash-сесії.
-Служба відрізняє очікуваний backup-диск за UUID і не запускає backup у
-порожній локальній директорії. Команди контролю та подробиці — у
-`AUTOMATION.md` і `CONFIGURATION.md`.
+The timer does not catch up on missed runs (`Persistent=false`). `OnFailure`
+creates a message for the next interactive Bash session. The wrapper verifies
+the expected disk UUID and will not back up into an empty local directory.
+See `AUTOMATION.md` and `CONFIGURATION.md` for control commands and details.
 
-Повна перевірка даних виконується командою `check --read-data` з розділу
-3.7; вона не запускається автоматично після кожного backup.
+A complete `check --read-data`, described in section 3.7, is not automatically
+run after each backup.
 
-## 7. Розмір і 200 GiB вільного місця на оригінальній системі
+## 7. Snapshot sizing and free VG space
 
-Динамічний розрахунок snapshot'у (`min(вільне−1G, 20%×LV)`, мінімум 5G)
-свідомо консервативний: снепшоту потрібне місце лише під зміни, зроблені
-**під час самого бекапу** (типово хвилини), а не під весь обсяг LV. При
-~200 GiB вільного місця у VG формула віддасть щось у районі 20% розміру
-LV (десятки, не сотні GiB) — великий запас лишається незайманим. Якщо
-колись вільного місця стане критично мало (`< 6G`), скрипт явно впаде з
-поясненням, скільки саме бракує, а не мовчки створить замалий снепшот,
-який переповниться і зламає консистентність бекапу.
+The dynamic calculation, `min(free space - 1G, 20% of LV size)` with a 5G
+minimum, is conservative. A snapshot only needs space for changes made
+**during the backup**, typically minutes, rather than the entire LV.
+With approximately 200 GiB free in the VG, the formula generally allocates
+20% of LV size, leaving much of the free space untouched. When space becomes
+too low (`< 6G`), the script reports the shortage and fails instead of
+creating an undersized snapshot that could overflow and break consistency.
 
-Відсутність backup-диска не блокує завантаження ОС. Служба намагається
-запустити mount через `Wants`/`After`; якщо диск недоступний, wrapper
-повідомляє «Не вдалося створити бекап», завершується з помилкою і викликає
-OnFailure notice. Перевірки mount та UUID не дозволяють записати бекап
-у каталог на системному диску замість відсутнього сховища.
+Missing backup disks do not block OS startup when their fstab entries use
+`nofail`. The service attempts the mount through `Wants`/`After`; if unavailable,
+the wrapper reports that the backup could not be created, fails, and triggers
+the failure notice. Mount and UUID checks prevent writing into the system
+disk directory in place of the missing repository.

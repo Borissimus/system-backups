@@ -1,34 +1,36 @@
-# Конфігурація для іншої машини
+# Configuring another machine
 
-Профіль описує вимоги до системи; скрипт звіряє їх із фактичною топологією.
-Налаштування дисків, сховища й розкладу зберігаються окремо від коду.
-Користувацькі конфіги зберігаються у `configs/` і ігноруються Git.
-В репозиторії лишаються лише детально прокоментовані `*.example.jsonc`.
-Підтримуються JSON та коментарі `//` на окремих рядках; inline-коментарі
-і блоки `/* ... */` не підтримуються. Генератор типово пише звичайний
-JSON у `configs/`; `--output-dir` дозволяє обрати інший каталог.
+A profile describes system requirements; the script checks them against the
+actual storage layout. Disk, repository, and schedule settings are stored
+separately from the code. User configs live in `configs/` and are ignored by
+Git. Only annotated `*.example.jsonc` files are versioned.
 
-Робочі файли:
+Both plain JSON and `//` comments on separate lines are supported. Inline
+comments and `/* ... */` blocks are not supported. The generator writes plain
+JSON into `configs/` by default; use `--output-dir` to choose another directory.
 
-- `configs/backup-config.json` — що саме вважати системним backup і як обробляти
-  схему root/LUKS/`/home`;
-- `/etc/system-backup/service.json` — де лежить backup-диск, розклад,
-  retention і параметри systemd-обгортки.
+Working configuration files:
 
-Повний порядок підготовки диска, встановлення залежностей, створення
-конфігів, ініціалізації restic та першого backup — у
-[BACKUP.md](BACKUP.md#3-налаштування-на-новій-машині). Python використовує
-стандартну бібліотеку; окреме середовище чи пакети pip не потрібні.
+- `configs/backup-config.json`: what to include in a system backup and how
+  to handle root, LUKS, boot, and `/home`.
+- `/etc/system-backup/service.json`: backup disk location, schedule,
+  retention, and systemd wrapper settings.
 
-Нижче — генератор та довідник полів. Альтернативно можна скопіювати
-`configs/backup-config.example.jsonc` і `configs/service-config.example.jsonc`, відредагувати
-їх для своєї машини та перевірити командами `validate`.
+For disk preparation, dependencies, config generation, repository
+initialization, and the first backup, see
+[BACKUP.md](BACKUP.md#3-setting-up-a-new-machine).
+Python uses only the standard library; no virtual environment or pip packages
+are required.
 
-## Створення конфігів
+The generator and field reference are below. Alternatively, copy
+`configs/backup-config.example.jsonc` and `configs/service-config.example.jsonc`,
+edit them for your machine, and run the corresponding `validate` commands.
 
-Генератор створює два JSON-файли, перевіряє їх і визначає UUID вже
-змонтованого backup-диска. Він не встановлює службу, не створює restic
-репозиторій та не перезаписує наявні конфіги.
+## Creating configuration files
+
+The generator creates and validates two JSON files and detects the UUID of an
+already mounted backup disk. It does not install the service, initialize a
+restic repository, or overwrite existing configuration files.
 
 ```bash
 python3 scripts/configure-system-backup.py \
@@ -41,198 +43,197 @@ python3 scripts/configure-system-backup.py \
   --notice-user "$USER"
 ```
 
-Замініть `/mnt/backup` фактичним mount вашого диска. Код може залишатися
-в робочому каталозі: `code_dir` і `backup_dir` незалежні. У storage-каталозі
-будуть `restic/`, `recovery-metadata/`, lock та журнал.
+Replace `/mnt/backup` with your disk's mount point. The code can stay in your
+working directory: `code_dir` and `backup_dir` are independent. The storage
+directory contains `restic/`, `recovery-metadata/`, the lock, and the history log.
 
-Профілі: `auto`, `lvm-luks-uefi`, `lvm-plain`, `partition-luks`,
-`partition-plain`. Це початкові вимоги, які можна редагувати в JSON:
-LVM-профілі вимагають snapshot, partition-профілі використовують live
-backup, `luks` вимагає шифрування, `plain` вимагає його відсутності.
-UEFI-профіль вимагає змонтований ESP. RAID, VG із кількома PV та складні
-багатодискові root-схеми наразі не підтримуються.
+Profiles: `auto`, `lvm-luks-uefi`, `lvm-plain`, `partition-luks`, and
+`partition-plain`. They provide initial requirements that you can edit in JSON:
+LVM profiles require snapshots, partition profiles use live backups, `luks`
+requires encryption, and `plain` requires its absence. The UEFI profile
+requires a mounted ESP. RAID, VGs with multiple PVs, and complex multi-disk
+root layouts are not currently supported.
 
-Якщо `/home` на окремому mount, генератор вимагає явного вибору:
+When `/home` is a separate mount, the generator requires an explicit choice:
 
-- `--home restic`: копіювати `/home` у **той самий репозиторій**, окремим
-  snapshot із тегом `system-home` і спільним тегом запуску; retention
-  застосовується також до нього;
-- `--home exclude`: пропустити окремий `/home`;
-- `--home external`: пропустити, позначивши, що його backup ведеться окремо;
-- `--home auto`: включати лише `/home`, який є частиною root filesystem.
+- `--home restic`: copy `/home` into **the same repository** as a separate
+  snapshot tagged `system-home` and with the shared run tag; retention also
+  applies to it.
+- `--home exclude`: skip the separate `/home`.
+- `--home external`: skip it and record that it is backed up separately.
+- `--home auto`: include `/home` only when it belongs to the root filesystem.
 
-Якщо `/home` на root filesystem, виберіть `auto`: він уже входить у root
-backup. Визначальною є межа filesystem, а не фізичний диск: окремий розділ
-`/home` на тому самому диску теж потребує вибору.
+If `/home` is on the root filesystem, select `auto`: it is already included
+in the root backup. The filesystem boundary matters, not the physical disk;
+a separate `/home` partition on the same disk also requires a choice.
 
-Перегляд плану можливий до створення restic-репозиторію і без його пароля;
-план та dry-run не створюють lock чи записів у backup-history:
+You can inspect the plan before initializing restic, without a repository
+password. Backup plan and dry-run modes do not create a lock or history entry:
 
 ```bash
 sudo bash backup-system.sh --config configs/backup-config.json \
   --backup-dir /mnt/backup/system-backups --print-plan
 ```
 
-Повне налаштування за створеними конфігами виконується однією командою:
+Complete setup from the generated configs takes one command:
 
 ```bash
 sudo bash scripts/setup-system-backup.sh --config "$PWD/configs/service-config.json"
 ```
 
-Скрипт встановлює відсутні залежності, налаштовує `fstab` за UUID,
-монтує диск, встановлює службу, готує пароль і новий restic-репозиторій,
-виконує dry-run та backup. Після нового успішного backup вмикає таймер.
-Для збереження вимкненого таймера додайте `--no-enable`.
-Наявні пароль, репозиторій та узгоджений запис у `fstab` зберігаються;
-повторний запуск виконує ще один backup. Диск не форматується.
-Докладні кроки та ручний варіант — у [BACKUP.md](BACKUP.md).
+It installs missing dependencies, configures `fstab` by UUID, mounts the disk,
+installs the service, prepares the password and repository, and performs a
+dry-run and backup. The timer is enabled only after a newly recorded successful
+backup. Add `--no-enable` to leave it disabled. Existing passwords and
+repositories are preserved; matching `fstab` entries are made optional with
+`nofail` and bounded timeouts. Repeated setup runs another backup. The disk is
+not formatted. Details and the manual alternative are in [BACKUP.md](BACKUP.md).
 
-Для оновлення лише службових файлів використовуйте
-`scripts/install-system-backup.sh`:
-
-`install --config FILE` застосовує саме цей service-конфіг, включно під час
-повторної інсталяції. Без `--config` встановлений `/etc` конфіг зберігається.
-Новий таймер не вмикається автоматично; вже увімкнений не вимикається. Профіль лишається за шляхом
-`backup_profile`, тому цей файл і `code_dir` мають бути доступні службі.
+To update only service files, use `scripts/install-system-backup.sh`.
+`--config FILE` applies that service config even during reinstallation.
+Without `--config`, the installed `/etc` config is preserved. A new timer is
+not enabled automatically; an already enabled timer is not disabled. The
+profile remains at `backup_profile`, so that file and `code_dir` must remain
+accessible to the service.
 
 ## `backup-config.json`
 
 `root.snapshot_mode`:
 
-- `auto` — якщо `/` є LVM LV, використовує read-only LVM snapshot; в іншому
-  випадку backup робиться з live filesystem;
-- `lvm` — вимагати LVM snapshot і завершитися помилкою, якщо root не LVM;
-- `live` — не створювати LVM snapshot навіть на LVM.
+- `auto`: use a read-only LVM snapshot when `/` is an LVM LV; otherwise back
+  up the live filesystem.
+- `lvm`: require an LVM snapshot and fail if root is not on LVM.
+- `live`: do not create an LVM snapshot, even for LVM root.
 
-Live backup без LVM придатний для звичайної системи, але не є строго
-атомарним знімком: файл, який активно змінюється під час читання, може
-потрапити в backup у проміжному стані. Для баз даних і VM потрібен їхній
-власний dump/stop hook або LVM/ZFS/Btrfs snapshot.
+Live backup without LVM works for ordinary systems but is not an atomic
+snapshot: files changing while being read may be captured in an intermediate
+state. Databases and VMs need their own dump/stop hooks or LVM/ZFS/Btrfs snapshots.
 
 `encryption.mode`:
 
-- `auto` — за наявності LUKS під root зберегти LUKS header;
-- `required` — не запускатися, якщо LUKS не виявлено;
-- `none` — не запускатися, якщо LUKS виявлено. Це захист від застосування
-  неправильного профілю, а не команда вимкнути шифрування.
+- `auto`: save the LUKS header if LUKS is detected beneath root.
+- `required`: refuse to run if LUKS is not detected.
+- `none`: refuse to run if LUKS is detected. This guards against the wrong
+  profile; it does not disable encryption.
 
 `boot.mode`:
 
-- `auto` — окремо backup `/boot`, а за наявності — і `/boot/efi`;
-- `required` — вимагати змонтований ESP (`/boot/efi`);
-- `none` — свідомо не робити окремий boot snapshot. Використовуйте лише коли
-  `/boot` гарантовано входить до root backup або ви маєте інший спосіб його
-  відновлення.
+- `auto`: back up `/boot` separately and include `/boot/efi` when available.
+- `required`: require a mounted ESP at `/boot/efi`.
+- `none`: deliberately omit the separate boot snapshot. Use only when
+  `/boot` is guaranteed to be part of the root backup or you have another
+  recovery procedure for it.
 
-`home` — найважливіше для окремого диска:
+`home`:
 
-- `auto`: коли `/home` на root filesystem, він уже входить до system-root;
-  коли це окремий mount, він **не** копіюється окремо;
-- `restic`: дозволено лише для окремо змонтованого `/home`; створює окремий
-  `system-home` snapshot у live режимі;
-- `external`: `/home` не входить у цей backup — користувач веде його в іншій
-  синхронізації/backup-системі;
-- `exclude`: те саме виключення, але без твердження, що інша копія існує.
+- `auto`: `/home` on the root filesystem is included in `system-root`; a
+  separate mount is not copied separately.
+- `restic`: allowed only for a separately mounted `/home`; creates a live
+  `system-home` snapshot.
+- `external`: `/home` is excluded because the user backs it up with another
+  backup or synchronization system.
+- `exclude`: the same exclusion, without claiming another backup exists.
 
-Для `external` та `exclude` скрипт відмовиться працювати, якщо `/home` на
-тому самому filesystem, що й `/`: це запобігає непомітному пропуску даних.
-`home.snapshot_mode` поки має єдине чесне значення `live`.
+For `external` and `exclude`, the script refuses to run if `/home` is on the
+same filesystem as `/`, preventing an accidental omission of data.
+`home.snapshot_mode` currently supports only `live`.
 
-Кожен прогін зберігає у `recovery-metadata/layout.json` виявлену топологію,
-обраний профіль, generic GPT/sfdisk/LUKS/LVM metadata і факт, чи окремий
-`/home` реально потрапив у цей запуск. Якщо `/home` лежить на іншому
-звичайному block-диску й включений через `restic`, зберігається його
-таблиця розділів: `home-disk.sfdisk`, а для GPT — також `home-disk.gpt`.
-Для filesystem безпосередньо на всьому диску таблиці немає; manifest
-позначає це явно, без фіктивних GPT-файлів. Для виключеного `/home`
-його таблиця не зберігається; для LV/мережевого mount у manifest лишається точний
-source, але схема нижнього storage потребує окремої recovery-процедури.
+Each run saves the detected topology, selected profile, generic GPT/sfdisk/
+LUKS/LVM metadata, and whether separate `/home` was backed up in
+`recovery-metadata/layout.json`. If `/home` is on another ordinary block disk
+and included with `restic`, its partition table is saved as `home-disk.sfdisk`
+and, for GPT, `home-disk.gpt`. A filesystem directly on a whole disk has no
+partition table; the manifest records that explicitly without fake GPT files.
+An excluded home's partition table is not saved. For an LV or network mount,
+the manifest records the source, but the underlying storage needs a separate
+recovery procedure.
 
-## Конфіги всередині бекапу
+## Configuration files inside backups
 
-Кожен новий backup зберігає у `recovery-metadata/`:
+Every new backup saves these files in `recovery-metadata/`:
 
-- `backup-config.json` — фактично використаний профіль з усіма застосованими
-  defaults; він зберігається також при запуску без `--config`;
-- `service-config.json` — конфіг, прочитаний службою для цього запуску;
-  при прямому ручному запуску backup-скрипта цей файл не створюється,
-  а його застаріла локальна копія прибирається;
-- `layout.json` — виявлена топологія, спільний `run_tag`, посилання на
-  збережені конфіги в `configuration`, фактичний retention і прапорець prune.
+- `backup-config.json`: the effective profile, including applied defaults;
+  saved even when running without `--config`.
+- `service-config.json`: the config loaded by the service for that run.
+  Direct manual backup does not create this file and removes any stale local
+  copy.
+- `layout.json`: detected topology, shared `run_tag`, references to saved
+  configs in `configuration`, actual retention, and the prune flag.
 
-Ці файли входять у зашифрований snapshot `recovery-metadata` у тому самому
-restic-репозиторії. JSONC нормалізується у звичайний JSON без коментарів.
-Зберігаються значення, завантажені перед backup, тому редагування файлу
-конфігурації під час запуску не змінить metadata цього запуску.
-Пароль, вміст password-файлу та інші змінні середовища не копіюються.
-У service-конфігу зберігається лише шлях до password-файлу.
+These files are included in the encrypted `recovery-metadata` snapshot in the
+same restic repository. JSONC is normalized to plain JSON without comments.
+Values loaded before backup are saved, so editing the config during a run
+does not change that run's metadata. Passwords, password-file contents, and
+other environment variables are not copied. The service config stores only
+the path to its password file.
 
-Зміна діє для нових snapshots; старі бекапи не доповнюються автоматично.
-Після оновлення коду перевстановіть службові файли, щоб wrapper передавав
-завантажений service-конфіг, і виконайте новий backup:
+This applies to new snapshots; existing backups are not modified. After
+updating the code, reinstall service files so the wrapper passes its loaded
+config, then run a new backup:
 
 ```bash
 sudo bash scripts/install-system-backup.sh --config "$PWD/configs/service-config.json"
 sudo systemctl start system-backup.service
 ```
 
-Для подальшого відновлення ці конфіги потрібно брати зі snapshot metadata
-вибраного запуску. Вони описують вихідну систему й службу; цільовий диск
-та його ідентифікатори мають задаватися окремо. Restore читає metadata й архівований backup-конфіг із вибраного
-snapshot та перевіряє відповідність layout. Service-конфіг описує
-вихідну машину й не застосовується автоматично на відновленій ОС.
+Recovery reads these configs from the metadata snapshot of the selected run.
+They describe the source machine and service; the target disk and identifiers
+are configured separately. Restore validates the archived backup config
+against the layout. It does not automatically apply the source service config
+to the restored OS.
 
 ## `service.json`
 
-Приклад — `configs/service-config.example.jsonc`. Він не містить пароль: пароль
-живе окремо в root-only файлі, на який посилається `restic_password_file`.
-Важливі поля:
+See `configs/service-config.example.jsonc`. It contains no password; the
+password is stored in a root-only file referenced by `restic_password_file`.
+Important fields:
 
-- `backup_mount` і `backup_disk_uuid`: служба спершу перевіряє, що саме цей
-  диск змонтовано; це не дає зробити backup у порожню локальну директорію;
-- `backup_dir`: каталог сховища бекапів усередині mount;
-- `code_dir`: каталог коду; за відсутності використовується `backup_dir`
-  для сумісності з конфігами попередньої версії;
-- `backup_profile`: шлях до `backup-config.json`; порожній рядок означає
-  built-in безпечні `auto` defaults;
-- `schedule`: локальний час `HH:MM`;
-- `retention`: кількість daily/weekly/monthly snapshot'ів кожного типу;
-- `min_repository_free_gib`: межа, нижче якої служба відмовляється стартувати.
+- `backup_mount` and `backup_disk_uuid`: the service verifies that the expected
+  disk is mounted, preventing writes into an empty local directory.
+- `backup_dir`: backup storage directory within that mount.
+- `code_dir`: code directory; defaults to `backup_dir` for compatibility with
+  earlier configs.
+- `backup_profile`: path to `backup-config.json`; an empty string uses the
+  built-in safe `auto` defaults.
+- `schedule`: local time in `HH:MM` format.
+- `retention`: daily, weekly, and monthly snapshot counts.
+- `min_repository_free_gib`: minimum free space required before backup starts.
 
-Після зміни `service.json` виконайте:
+After editing `service.json`:
 
 ```bash
 sudo bash scripts/install-system-backup.sh
 system-backupctl timer
 ```
 
-Перед першим запуском можна підготувати локальний (ігнорований Git)
-`configs/service-config.json` поруч із прикладом: інсталятор перевірить і скопіює
-його до `/etc/system-backup/service.json`. Після першої інсталяції
-канонічна робоча копія — саме файл у `/etc`; інсталятор зберігає його й
-пароль, але перегенеровує залежності mount unit (`Wants`/`After`) та час timer. Сам backup-диск все одно має бути описаний у `/etc/fstab` через UUID
-і `nofail`.
+Before initial installation, you can prepare an ignored local
+`configs/service-config.json` beside the example. The installer validates and
+copies it to `/etc/system-backup/service.json`. After installation, the `/etc`
+file is the active copy. Reinstallation preserves it and the password but
+regenerates mount dependencies (`Wants`/`After`) and the timer schedule. The
+backup disk must still have a UUID-based `fstab` entry with `nofail`.
 
-Не копіюйте `configs/service-config.example.jsonc` без редагування: замініть усі
-`USER`, mount path і `PUT-BACKUP-DISK-UUID-HERE`, потім перевірте файл:
+Do not use the example unchanged: replace every `USER`, mount path, and
+`PUT-BACKUP-DISK-UUID-HERE`, then validate it:
 
 ```bash
 cp configs/service-config.example.jsonc configs/service-config.jsonc
-# відредагуйте configs/service-config.jsonc для конкретної машини
+# Edit configs/service-config.jsonc for this machine.
 python3 scripts/service-config.py validate --config configs/service-config.jsonc
 sudo bash scripts/setup-system-backup.sh --config "$PWD/configs/service-config.jsonc"
 ```
 
-## Конфіг відновлення
+## Recovery configuration
 
-Restore використовує окремий `configs/restore-config.json` або `.jsonc`.
-Приклад — `configs/restore-config.example.jsonc`, інструкція й поточні
-обмеження — у [RECOVERY.md](RECOVERY.md).
+Restore uses a separate `configs/restore-config.json` or `.jsonc`. See
+`configs/restore-config.example.jsonc` and [RECOVERY.md](RECOVERY.md) for
+instructions and current limitations.
 
-Можна створити конфіг інтерактивно після підключення цільового диска.
-Для кожного UUID і назви оберіть `original`, `generate` або власне значення.
-Відновлення поруч із поточною системою вимагає неконфліктних значень;
-ціль вибирається окремо від archived backup/service конфігів.
-Metadata читаються зі snapshot конкретного узгодженого run, а не з
-локальної mutable копії. Підтримується Ubuntu x86_64 з LVM/LUKS/ext4/UEFI;
-новий процес ще потребує тесту на фізичному диску й завантаження ОС.
+Create a config interactively after connecting the target disk. For each UUID
+and name, choose `original`, `generate`, or an explicit value. Recovery beside
+a running source system requires identifiers that do not conflict. The target
+is selected independently from archived backup/service configs. Metadata is
+read from a snapshot of one complete run, never from the mutable local copy.
+Ubuntu x86_64 with LVM/LUKS/ext4/UEFI is supported. Recovery onto a physical disk
+and booting the restored OS were verified on 2026-10-09 with generated
+identifiers, a new LUKS header, and dracut; other modes still require testing.
