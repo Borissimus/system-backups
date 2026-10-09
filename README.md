@@ -32,13 +32,13 @@ python3 scripts/configure-system-backup.py \
   --notice-user "$USER"
 
 sudo bash scripts/setup-system-backup.sh \
-  --config "$PWD/configs/service-config.json"
+  --config "$PWD/configs/user/service-config.json"
 ```
 
 Setup installs missing dependencies, prepares the service and repository,
 runs the first backup, and enables the timer only after success. Add
-`--no-enable` to leave the timer disabled. User configs in `configs/` are
-ignored by Git; annotated `*.example.jsonc` files are provided. Python uses
+`--no-enable` to leave the timer disabled. User configs in `configs/user/` are
+ignored by Git; annotated `*.jsonc` files are provided in `configs/examples/`. Python uses
 only the standard library, with no virtual environment or pip packages required.
 
 ## Documentation
@@ -47,3 +47,11 @@ only the standard library, with no virtual environment or pip packages required.
 - [Recovery procedure and verification](docs/RECOVERY.md)
 - [Configuration generator and field reference](docs/CONFIGURATION.md)
 - [Systemd scheduling and failure notices](docs/AUTOMATION.md)
+
+Configuration files are separated by purpose:
+
+```text
+configs/
+├── examples/   # Versioned, annotated JSONC templates
+└── user/       # Local configuration files, ignored by Git
+```

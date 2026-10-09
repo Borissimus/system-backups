@@ -4,16 +4,16 @@ Run all command examples from the repository root.
 
 A profile describes system requirements; the script checks them against the
 actual storage layout. Disk, repository, and schedule settings are stored
-separately from the code. User configs live in `configs/` and are ignored by
-Git. Only annotated `*.example.jsonc` files are versioned.
+separately from the code. User configs live in `configs/user/` and are ignored by
+Git. Only annotated `*.jsonc` files in `configs/examples/` are versioned.
 
 Both plain JSON and `//` comments on separate lines are supported. Inline
 comments and `/* ... */` blocks are not supported. The generator writes plain
-JSON into `configs/` by default; use `--output-dir` to choose another directory.
+JSON into `configs/user/` by default; use `--output-dir` to choose another directory.
 
 Working configuration files:
 
-- `configs/backup-config.json`: what to include in a system backup and how
+- `configs/user/backup-config.json`: what to include in a system backup and how
   to handle root, LUKS, boot, and `/home`.
 - `/etc/system-backup/service.json`: backup disk location, schedule,
   retention, and systemd wrapper settings.
@@ -25,7 +25,7 @@ Python uses only the standard library; no virtual environment or pip packages
 are required.
 
 The generator and field reference are below. Alternatively, copy
-`configs/backup-config.example.jsonc` and `configs/service-config.example.jsonc`,
+`configs/examples/backup-config.jsonc` and `configs/examples/service-config.jsonc`,
 edit them for your machine, and run the corresponding `validate` commands.
 
 ## Creating configuration files
@@ -40,7 +40,7 @@ python3 scripts/configure-system-backup.py \
   --home exclude \
   --backup-mount /mnt/backup \
   --backup-dir /mnt/backup/system-backups \
-  --output-dir "$PWD/configs" \
+  --output-dir "$PWD/configs/user" \
   --schedule 20:00 \
   --notice-user "$USER"
 ```
@@ -73,14 +73,14 @@ You can inspect the plan before initializing restic, without a repository
 password. Backup plan and dry-run modes do not create a lock or history entry:
 
 ```bash
-sudo bash backup-system.sh --config configs/backup-config.json \
+sudo bash backup-system.sh --config configs/user/backup-config.json \
   --backup-dir /mnt/backup/system-backups --print-plan
 ```
 
 Complete setup from the generated configs takes one command:
 
 ```bash
-sudo bash scripts/setup-system-backup.sh --config "$PWD/configs/service-config.json"
+sudo bash scripts/setup-system-backup.sh --config "$PWD/configs/user/service-config.json"
 ```
 
 It installs missing dependencies, configures `fstab` by UUID, mounts the disk,
@@ -174,7 +174,7 @@ updating the code, reinstall service files so the wrapper passes its loaded
 config, then run a new backup:
 
 ```bash
-sudo bash scripts/install-system-backup.sh --config "$PWD/configs/service-config.json"
+sudo bash scripts/install-system-backup.sh --config "$PWD/configs/user/service-config.json"
 sudo systemctl start system-backup.service
 ```
 
@@ -186,7 +186,7 @@ to the restored OS.
 
 ## `service.json`
 
-See `configs/service-config.example.jsonc`. It contains no password; the
+See `configs/examples/service-config.jsonc`. It contains no password; the
 password is stored in a root-only file referenced by `restic_password_file`.
 Important fields:
 
@@ -209,7 +209,7 @@ system-backupctl timer
 ```
 
 Before initial installation, you can prepare an ignored local
-`configs/service-config.json` beside the example. The installer validates and
+`configs/user/service-config.json` in `configs/user/`. The installer validates and
 copies it to `/etc/system-backup/service.json`. After installation, the `/etc`
 file is the active copy. Reinstallation preserves it and the password but
 regenerates mount dependencies (`Wants`/`After`) and the timer schedule. The
@@ -219,16 +219,17 @@ Do not use the example unchanged: replace every `USER`, mount path, and
 `PUT-BACKUP-DISK-UUID-HERE`, then validate it:
 
 ```bash
-cp configs/service-config.example.jsonc configs/service-config.jsonc
-# Edit configs/service-config.jsonc for this machine.
-python3 scripts/service-config.py validate --config configs/service-config.jsonc
-sudo bash scripts/setup-system-backup.sh --config "$PWD/configs/service-config.jsonc"
+mkdir -p configs/user
+cp configs/examples/service-config.jsonc configs/user/service-config.jsonc
+# Edit configs/user/service-config.jsonc for this machine.
+python3 scripts/service-config.py validate --config configs/user/service-config.jsonc
+sudo bash scripts/setup-system-backup.sh --config "$PWD/configs/user/service-config.jsonc"
 ```
 
 ## Recovery configuration
 
-Restore uses a separate `configs/restore-config.json` or `.jsonc`. See
-`configs/restore-config.example.jsonc` and [RECOVERY.md](RECOVERY.md) for
+Restore uses a separate `configs/user/restore-config.json` or `.jsonc`. See
+`configs/examples/restore-config.jsonc` and [RECOVERY.md](RECOVERY.md) for
 instructions and current limitations.
 
 Create a config interactively after connecting the target disk. For each UUID

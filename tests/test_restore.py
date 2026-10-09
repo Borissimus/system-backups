@@ -57,7 +57,7 @@ class RestoreTests(unittest.TestCase):
         return config
 
     def test_documented_example_is_valid(self):
-        result = CONFIG.load(ROOT / 'configs/restore-config.example.jsonc')
+        result = CONFIG.load(ROOT / 'configs/examples/restore-config.jsonc')
         self.assertEqual(result['identifiers'], CONFIG.DEFAULT['identifiers'])
 
     def test_original_generate_and_explicit_identifiers(self):

@@ -20,7 +20,7 @@ will be added only after separate hardware wakeup tests.
 After creating the configuration files:
 
 ```bash
-sudo bash scripts/setup-system-backup.sh --config "$PWD/configs/service-config.json"
+sudo bash scripts/setup-system-backup.sh --config "$PWD/configs/user/service-config.json"
 ```
 
 The script prepares the mount, dependencies, service, password, and restic
@@ -40,7 +40,7 @@ in [BACKUP.md](BACKUP.md#3-setting-up-a-new-machine).
 
 # 1. Install the files and root-only password without enabling the timer.
 #    For a new repository, run restic init after installation; see BACKUP.md.
-scripts/system-backupctl.sh install --config "$PWD/configs/service-config.json"
+scripts/system-backupctl.sh install --config "$PWD/configs/user/service-config.json"
 
 # 2. Run the service once and inspect its journal.
 scripts/system-backupctl.sh run

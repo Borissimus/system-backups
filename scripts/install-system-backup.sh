@@ -34,7 +34,7 @@ LIB_DIR=/usr/local/lib/system-backup
 CONFIG_DIR=/etc/system-backup
 CONFIG="$CONFIG_DIR/service.json"
 LEGACY_CONFIG="$CONFIG_DIR/system-backup.conf"
-REPO_SERVICE_CONFIG="${SERVICE_CONFIG:-$REPO_DIR/configs/service-config.json}"
+REPO_SERVICE_CONFIG="${SERVICE_CONFIG:-$REPO_DIR/configs/user/service-config.json}"
 if [[ -n "$SERVICE_CONFIG" ]]; then
   python3 "$SCRIPT_DIR/service-config.py" validate --config "$SERVICE_CONFIG"
 fi
@@ -54,17 +54,17 @@ install -m 0644 "$REPO_DIR/systemd/system-backup-failure.service" /etc/systemd/s
 # Keep the backup profile next to the backup code and repository. It contains
 # no password and is deliberately ignored by Git: each machine owns its
 # storage-layout decisions. The initial profile is safe auto-detection.
-if [[ -z "$SERVICE_CONFIG" && ! -e "$REPO_DIR/configs/backup-config.json" ]]; then
-  install -d -m 0755 "$REPO_DIR/configs"
-  python3 - "$REPO_DIR/configs/backup-config.example.jsonc" "$REPO_DIR/configs/backup-config.json" <<'PYPROFILE'
+if [[ -z "$SERVICE_CONFIG" && ! -e "$REPO_DIR/configs/user/backup-config.json" ]]; then
+  install -d -m 0755 "$REPO_DIR/configs/user"
+  python3 - "$REPO_DIR/configs/examples/backup-config.jsonc" "$REPO_DIR/configs/user/backup-config.json" <<'PYPROFILE'
 import json, sys
 from pathlib import Path
 lines = Path(sys.argv[1]).read_text().splitlines()
 profile = json.loads("\n".join(line for line in lines if not line.lstrip().startswith("//")))
 Path(sys.argv[2]).write_text(json.dumps(profile, indent=2) + "\n")
 PYPROFILE
-  chmod 0644 "$REPO_DIR/configs/backup-config.json"
-  echo "Created $REPO_DIR/configs/backup-config.json"
+  chmod 0644 "$REPO_DIR/configs/user/backup-config.json"
+  echo "Created $REPO_DIR/configs/user/backup-config.json"
 else
   echo "Using backup profile from service configuration"
 fi
@@ -109,7 +109,7 @@ if [[ ! -e "$CONFIG" ]]; then
       callback="$(legacy_value SUCCESS_CALLBACK || true)"; callback="${callback:-/usr/local/lib/system-backup/after-success}"
       echo "Migrating settings from $LEGACY_CONFIG to JSON (old file preserved)."
     fi
-    python3 - "$CONFIG" "$REPO_DIR" "$backup_mount" "$backup_uuid" "$REPO_DIR/configs/backup-config.json" \
+    python3 - "$CONFIG" "$REPO_DIR" "$backup_mount" "$backup_uuid" "$REPO_DIR/configs/user/backup-config.json" \
       "$retention_daily" "$retention_weekly" "$retention_monthly" "$minimum_free" "$password_path" "$callback" "${SUDO_USER:-}" <<'PY'
 import json, sys
 (

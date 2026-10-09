@@ -27,18 +27,18 @@ been tested on hardware.
 | `restore-system.sh` | Full recovery onto a target disk |
 | `scripts/setup-system-backup.sh` | Complete setup from prepared configs and first backup |
 | `scripts/configure-system-backup.py` | Generate matching backup/service configs |
-| `configs/backup-config.example.jsonc` | Annotated root/LUKS/boot/home profile example |
-| `configs/service-config.example.jsonc` | Systemd service settings example without secrets |
+| `configs/examples/backup-config.jsonc` | Annotated root/LUKS/boot/home profile example |
+| `configs/examples/service-config.jsonc` | Systemd service settings example without secrets |
 | `backup-history.log` | Run history, created automatically |
 | `.backup.lock` | Lock against concurrent runs, created automatically |
 | `.restore-state.json` | Recovery journal bound to a target and snapshot IDs |
-| `configs/restore-config.example.jsonc` | Recovery target, identifiers, and LUKS header settings |
+| `configs/examples/restore-config.jsonc` | Recovery target, identifiers, and LUKS header settings |
 
 Code and storage can be separate. `restic/`, `recovery-metadata/`, history,
 lock, and recovery state are created in `backup_dir`; without `--backup-dir`,
-they are created beside the script. Local configs in `configs/` and repository
-data are ignored by Git. Only annotated `*.example.jsonc` files are versioned
-in `configs/`. Validators and scripts accept plain JSON and `//` comments on
+they are created beside the script. Local configs in `configs/user/` and repository
+data are ignored by Git. Only annotated `*.jsonc` files are versioned
+in `configs/examples/`. Validators and scripts accept plain JSON and `//` comments on
 separate lines; inline comments and `/* ... */` are not supported.
 The installed service config is `/etc/system-backup/service.json`.
 
@@ -49,8 +49,8 @@ After connecting the target, create a separate recovery config:
 ```bash
 sudo bash restore-system.sh --interactive \
   --backup-dir /backup/system/system-backups \
-  --config "$PWD/configs/restore-config.json"
-sudo bash restore-system.sh --config "$PWD/configs/restore-config.json" --dry-run
+  --config "$PWD/configs/user/restore-config.json"
+sudo bash restore-system.sh --config "$PWD/configs/user/restore-config.json" --dry-run
 ```
 
 For recovery beside the running source system, select `generate` for all
@@ -187,14 +187,14 @@ python3 scripts/configure-system-backup.py \
   --home exclude \
   --backup-mount /backup/system \
   --backup-dir /backup/system/system-backups \
-  --output-dir "$PWD/configs" \
+  --output-dir "$PWD/configs/user" \
   --schedule 20:00 \
   --notice-user "$USER"
 
-python3 scripts/backup-config.py validate --config configs/backup-config.json
-python3 scripts/service-config.py validate --config configs/service-config.json
-cat configs/backup-config.json
-cat configs/service-config.json
+python3 scripts/backup-config.py validate --config configs/user/backup-config.json
+python3 scripts/service-config.py validate --config configs/user/service-config.json
+cat configs/user/backup-config.json
+cat configs/user/service-config.json
 ```
 
 The generator detects the mounted disk UUID and creates:
@@ -212,7 +212,7 @@ the service.
 After creating and validating configs:
 
 ```bash
-sudo bash scripts/setup-system-backup.sh --config "$PWD/configs/service-config.json"
+sudo bash scripts/setup-system-backup.sh --config "$PWD/configs/user/service-config.json"
 ```
 
 This is the primary installation method. It:
@@ -245,7 +245,7 @@ To install and run the first backup without enabling the schedule:
 
 ```bash
 sudo bash scripts/setup-system-backup.sh \
-  --config "$PWD/configs/service-config.json" --no-enable
+  --config "$PWD/configs/user/service-config.json" --no-enable
 ```
 
 Follow the journal from another terminal during backup:
@@ -263,7 +263,7 @@ Inspect the plan before backup, without a repository password:
 
 ```bash
 sudo bash backup-system.sh \
-  --config "$PWD/configs/backup-config.json" \
+  --config "$PWD/configs/user/backup-config.json" \
   --backup-dir /backup/system/system-backups \
   --print-plan
 ```
@@ -272,7 +272,7 @@ Prepare storage and install the service without enabling the timer:
 
 ```bash
 sudo install -d -m 0700 /backup/system/system-backups
-sudo bash scripts/install-system-backup.sh --config "$PWD/configs/service-config.json"
+sudo bash scripts/install-system-backup.sh --config "$PWD/configs/user/service-config.json"
 ```
 
 The installer asks for the restic password and saves it in the root-only
@@ -296,7 +296,7 @@ restic commands below.
 ```bash
 sudo env RESTIC_PASSWORD_FILE=/etc/system-backup/restic.pass \
   bash backup-system.sh \
-  --config "$PWD/configs/backup-config.json" \
+  --config "$PWD/configs/user/backup-config.json" \
   --backup-dir /backup/system/system-backups \
   --dry-run
 
@@ -356,8 +356,8 @@ the script uses built-in `auto` defaults even if a local config exists.
 Apply an edited local service config explicitly:
 
 ```bash
-python3 scripts/service-config.py validate --config configs/service-config.json
-sudo bash scripts/install-system-backup.sh --config "$PWD/configs/service-config.json"
+python3 scripts/service-config.py validate --config configs/user/service-config.json
+sudo bash scripts/install-system-backup.sh --config "$PWD/configs/user/service-config.json"
 systemctl list-timers system-backup.timer --all --no-pager
 ```
 

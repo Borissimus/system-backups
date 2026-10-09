@@ -16,14 +16,17 @@ def helper(name):
     return module
 
 
+DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent.parent / 'configs/user'
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--profile', choices=['auto', 'lvm-luks-uefi', 'lvm-plain', 'partition-luks', 'partition-plain'], required=True)
     parser.add_argument('--home', choices=['auto', 'restic', 'external', 'exclude'], help='restic: include separate /home in the same repository; exclude: skip it; auto: include only when part of root')
     parser.add_argument('--backup-mount', required=True, help='existing mount of the backup disk')
     parser.add_argument('--backup-dir', required=True, help='absolute storage directory inside the mount')
-    parser.add_argument('--output-dir', default=str(Path(__file__).resolve().parent.parent / 'configs'),
-                        help='directory for user configs (default: project configs/)')
+    parser.add_argument('--output-dir', default=str(DEFAULT_OUTPUT_DIR),
+                        help='directory for user configs (default: project configs/user/)')
     parser.add_argument('--schedule', default='20:00')
     parser.add_argument('--notice-user', default='')
     args = parser.parse_args()

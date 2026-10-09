@@ -512,7 +512,7 @@ def wizard(args):
     config['backup_run'] = input('Backup run tag [latest]: ').strip() or 'latest'
     config['restic_password_file'] = input('Restic password file (empty for prompt): ').strip()
     CONFIG.validate(config)
-    filename = Path(args.config or Path(__file__).resolve().parent.parent / 'configs/restore-config.json')
+    filename = Path(args.config or Path(__file__).resolve().parent.parent / 'configs/user/restore-config.json')
     if filename.exists() or filename.is_symlink():
         raise ValueError(f'{filename} already exists; choose --config with a different filename')
     filename.parent.mkdir(parents=True, exist_ok=True)

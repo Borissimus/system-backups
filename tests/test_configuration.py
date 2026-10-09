@@ -27,12 +27,12 @@ GENERATOR = module('configure-system-backup')
 
 class ConfigurationTests(unittest.TestCase):
     def service(self):
-        config = SERVICE.load(str(ROOT / 'configs/service-config.example.jsonc'))
+        config = SERVICE.load(str(ROOT / 'configs/examples/service-config.jsonc'))
         config['code_dir'] = str(ROOT)
         return config
 
     def test_commented_examples_and_literal_slashes(self):
-        profile, _ = BACKUP.load(str(ROOT / 'configs/backup-config.example.jsonc'))
+        profile, _ = BACKUP.load(str(ROOT / 'configs/examples/backup-config.jsonc'))
         self.assertEqual(profile['root']['snapshot_mode'], 'auto')
         with tempfile.TemporaryDirectory() as directory:
             filename = Path(directory) / 'profile.jsonc'
@@ -100,6 +100,21 @@ class ConfigurationTests(unittest.TestCase):
                         with self.assertRaises(SystemExit):
                             GENERATOR.main()
                     self.assertEqual((Path(directory) / 'backup-config.json').read_bytes(), before)
+
+    def test_generator_defaults_to_user_directory(self):
+        self.assertEqual(GENERATOR.DEFAULT_OUTPUT_DIR, ROOT / 'configs/user')
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'user'
+            args = ['configure', '--profile', 'lvm-luks-uefi', '--home', 'exclude',
+                    '--backup-mount', '/backup', '--backup-dir', '/backup/system']
+            with patch('sys.argv', args), patch.object(GENERATOR, 'DEFAULT_OUTPUT_DIR', output), \
+                    patch.object(GENERATOR.subprocess, 'check_output',
+                                 side_effect=['/dev/sdb1\n', 'test-uuid\n', '/home\n']), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                GENERATOR.main()
+            service = SERVICE.load(str(output / 'service-config.json'))
+            self.assertEqual(service['backup_profile'], str(output / 'backup-config.json'))
+            self.assertTrue((output / 'backup-config.json').is_file())
 
     def test_generator_requires_choice_for_separate_home(self):
         with tempfile.TemporaryDirectory() as directory:

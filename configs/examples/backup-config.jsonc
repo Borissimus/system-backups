@@ -1,6 +1,6 @@
-// Backup profile. Copy to configs/backup-config.jsonc, edit and validate.
+// Backup profile. Copy to configs/user/backup-config.jsonc, edit and validate.
 // Only // comments on their own lines are supported. No inline/block comments.
-// Or use configure-system-backup.py to generate plain JSON in configs/.
+// Or use configure-system-backup.py to generate plain JSON in configs/user/.
 {
   // Schema version; only integer 1 is supported.
   "schema_version": 1,

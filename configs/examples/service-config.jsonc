@@ -1,6 +1,6 @@
-// Service settings. Copy to configs/service-config.jsonc and replace placeholders.
-// Validate with: python3 scripts/service-config.py validate --config configs/service-config.jsonc
-// Setup with: sudo bash scripts/setup-system-backup.sh --config configs/service-config.jsonc
+// Service settings. Copy to configs/user/service-config.jsonc and replace placeholders.
+// Validate with: python3 scripts/service-config.py validate --config configs/user/service-config.jsonc
+// Setup with: sudo bash scripts/setup-system-backup.sh --config configs/user/service-config.jsonc
 // Only // comments on their own lines are supported. No inline/block comments.
 {
   "schema_version": 1,
@@ -17,7 +17,7 @@
   "backup_disk_uuid": "PUT-BACKUP-DISK-UUID-HERE",
   // Absolute path to your profile. It is read anew at every backup.
   // An empty string selects built-in auto defaults, not a local config file.
-  "backup_profile": "/home/USER/software_projects/system-backups/configs/backup-config.jsonc",
+  "backup_profile": "/home/USER/software_projects/system-backups/configs/user/backup-config.jsonc",
   // Local HH:MM, 24-hour format. Missed runs are not caught up after boot.
   "schedule": "20:00",
   // Counts retained per backup type and host; at least one must be positive.

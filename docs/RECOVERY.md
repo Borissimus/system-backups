@@ -63,9 +63,9 @@ findmnt --mountpoint /backup/system
 ## Creating a recovery configuration
 
 The backup config describes the source system. The target, its identifiers,
-and LUKS header mode belong to a **separate** recovery config in `configs/`,
+and LUKS header mode belong to a **separate** recovery config in `configs/user/`,
 ignored by Git. See the annotated
-[configs/restore-config.example.jsonc](../configs/restore-config.example.jsonc).
+[configs/examples/restore-config.jsonc](../configs/examples/restore-config.jsonc).
 Plain JSON and separate-line `//` comments are supported.
 
 The interactive wizard only creates a config; it does not change disks:
@@ -73,7 +73,7 @@ The interactive wizard only creates a config; it does not change disks:
 ```bash
 sudo bash restore-system.sh --interactive \
   --backup-dir /backup/system/system-backups \
-  --config "$PWD/configs/restore-config.json"
+  --config "$PWD/configs/user/restore-config.json"
 ```
 
 It lists unmounted targets and asks for a disk, identifier mode, LUKS header
@@ -84,9 +84,10 @@ the file is root-owned with mode 0600; use `sudoedit` to edit it.
 Alternatively, copy and edit the example:
 
 ```bash
-cp configs/restore-config.example.jsonc configs/restore-config.jsonc
-nano configs/restore-config.jsonc
-python3 scripts/restore-config.py validate --config configs/restore-config.jsonc
+mkdir -p configs/user
+cp configs/examples/restore-config.jsonc configs/user/restore-config.jsonc
+nano configs/user/restore-config.jsonc
+python3 scripts/restore-config.py validate --config configs/user/restore-config.jsonc
 ```
 
 Set `target.device` and the exact `target.serial`. Prefer a stable
@@ -137,10 +138,10 @@ to open the container. `restore` requires the source's old passphrase.
 
 ```bash
 sudo bash restore-system.sh \
-  --config "$PWD/configs/restore-config.json" --dry-run
+  --config "$PWD/configs/user/restore-config.json" --dry-run
 ```
 
-Use `configs/restore-config.jsonc` instead if you edited the JSONC example.
+Use `configs/user/restore-config.jsonc` instead if you edited the JSONC example.
 Dry-run reads the repository, extracts metadata into a temporary directory,
 and validates the plan. **The target disk is unchanged** and no recovery
 journal is created. `.backup.lock` is held during checks and recovery to block
@@ -167,7 +168,7 @@ intended recovery disk, not root, home, swap, or the backup disk.
 After a successful dry-run:
 
 ```bash
-sudo bash restore-system.sh --config "$PWD/configs/restore-config.json"
+sudo bash restore-system.sh --config "$PWD/configs/user/restore-config.json"
 ```
 
 Before any changes, enter **`ERASE <serial>`**. Disk identity and conflicts are
@@ -198,9 +199,9 @@ config hash, disk identity, exact snapshot IDs, and resolved identifiers.
 Generated UUIDs remain unchanged during resume.
 
 ```bash
-sudo bash restore-system.sh --config "$PWD/configs/restore-config.json" --status
-sudo bash restore-system.sh --config "$PWD/configs/restore-config.json" --resume --dry-run
-sudo bash restore-system.sh --config "$PWD/configs/restore-config.json" --resume
+sudo bash restore-system.sh --config "$PWD/configs/user/restore-config.json" --status
+sudo bash restore-system.sh --config "$PWD/configs/user/restore-config.json" --resume --dry-run
+sudo bash restore-system.sh --config "$PWD/configs/user/restore-config.json" --resume
 ```
 
 After a failure, use `--resume`, not a fresh run. Completed partition/LUKS/LVM/

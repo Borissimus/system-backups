@@ -24,7 +24,7 @@ class SetupTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('service_config', ROOT / 'scripts/service-config.py')
         helper = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(helper)
-        config = helper.load(str(ROOT / 'configs/service-config.example.jsonc'))
+        config = helper.load(str(ROOT / 'configs/examples/service-config.jsonc'))
         config.update(code_dir=str(root), backup_mount=str(root / 'mount'),
                       backup_dir=str(storage), backup_disk_uuid='mock-uuid', backup_profile='',
                       restic_password_file=str(password), min_repository_free_gib=0)

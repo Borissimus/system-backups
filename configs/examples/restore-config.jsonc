@@ -1,4 +1,4 @@
-// Copy to configs/restore-config.jsonc and edit, or run restore-system.sh --interactive.
+// Copy to configs/user/restore-config.jsonc and edit, or run restore-system.sh --interactive.
 // Full-line // comments only. No passwords are stored in this config.
 {
   "schema_version": 1,
