@@ -1,5 +1,7 @@
 # System recovery from restic
 
+Run all command examples from the repository root.
+
 This is the guide for `restore-system.sh`. The current implementation restores
 **Ubuntu x86_64, UEFI, ext4 root on LVM inside LUKS, a separate ext4 `/boot`,
 and FAT32 EFI**. Recovery targets an explicitly selected whole disk.
@@ -63,7 +65,7 @@ findmnt --mountpoint /backup/system
 The backup config describes the source system. The target, its identifiers,
 and LUKS header mode belong to a **separate** recovery config in `configs/`,
 ignored by Git. See the annotated
-[configs/restore-config.example.jsonc](configs/restore-config.example.jsonc).
+[configs/restore-config.example.jsonc](../configs/restore-config.example.jsonc).
 Plain JSON and separate-line `//` comments are supported.
 
 The interactive wizard only creates a config; it does not change disks:

@@ -1,5 +1,7 @@
 # Automated backups with systemd
 
+Run all command examples from the repository root.
+
 The service runs a daily unattended backup (20:00 by default). Suspend,
 Wake-on-LAN, and BIOS RTC wakeup are intentionally not implemented; they
 will be added only after separate hardware wakeup tests.

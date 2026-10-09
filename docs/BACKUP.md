@@ -1,5 +1,7 @@
 # system-backups — backup and recovery
 
+Run all command examples from the repository root.
+
 This directory is a self-contained toolkit for system backups with
 [restic](https://restic.net/). `backup-system.sh` supports LVM-on-LUKS and
 simpler root layouts. Recovery for the tested LVM-on-LUKS UEFI profile is

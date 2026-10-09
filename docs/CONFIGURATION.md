@@ -1,5 +1,7 @@
 # Configuring another machine
 
+Run all command examples from the repository root.
+
 A profile describes system requirements; the script checks them against the
 actual storage layout. Disk, repository, and schedule settings are stored
 separately from the code. User configs live in `configs/` and are ignored by

@@ -19,7 +19,7 @@
 # for the same LVM snapshot name / restic repo lock.
 #
 # History: every real run (success, failure, or skipped-due-to-lock) appends
-# one line to backup-history.log — see BACKUP.md in this directory for the
+# one line to backup-history.log — see docs/BACKUP.md for the
 # exact format. Meant to be machine-parsed by a future monitoring/systemd
 # layer, not just human-read.
 #
