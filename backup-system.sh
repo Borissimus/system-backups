@@ -19,7 +19,7 @@
 # for the same LVM snapshot name / restic repo lock.
 #
 # History: every real run (success, failure, or skipped-due-to-lock) appends
-# one line to backup-history.log — see README.md in this directory for the
+# one line to backup-history.log — see BACKUP.md in this directory for the
 # exact format. Meant to be machine-parsed by a future monitoring/systemd
 # layer, not just human-read.
 #
@@ -417,18 +417,10 @@ if (( LUKS_ENABLED )); then
 else
   rm -f "$META/luks-header.img"
 fi
-# Keep legacy names only for the already verified LVM-on-LUKS UEFI recovery
-# procedure. Other topologies must be restored from layout.json + the generic
-# names, rather than accidentally being treated as this machine's NVMe layout.
-if (( ROOT_IS_LVM && LUKS_ENABLED && HAS_ESP )) && [[ "$ROOT_TABLE_TYPE" == gpt ]]; then
-  cp "$META/disk.gpt" "$META/nvme0n1.gpt"
-  cp "$META/disk.sfdisk" "$META/nvme0n1.sfdisk"
-  cp "$META/lvm-vg.conf" "$META/ubuntu-vg.conf"
-  cp "$META/luks-header.img" "$META/nvme0n1p3-luks-header.img"
-else
-  rm -f "$META/nvme0n1.gpt" "$META/nvme0n1.sfdisk" \
-    "$META/ubuntu-vg.conf" "$META/nvme0n1p3-luks-header.img"
-fi
+# Remove obsolete machine-specific aliases from metadata left by older runs.
+# Current recovery uses layout.json and the generic filenames above.
+rm -f "$META/nvme0n1.gpt" "$META/nvme0n1.sfdisk" \
+  "$META/ubuntu-vg.conf" "$META/nvme0n1p3-luks-header.img"
 ROOT_BACKUP_PATH=$([[ $USE_LVM_SNAPSHOT -eq 1 ]] && printf '%s' "$SNAP_MOUNT" || printf '/')
 ROOT_FS_TYPE=$(findmnt -no FSTYPE /)
 BOOT_FS_TYPE=$(findmnt -no FSTYPE --target /boot)

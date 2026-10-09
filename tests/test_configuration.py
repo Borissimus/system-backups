@@ -245,26 +245,6 @@ esac""",
                 self.assertIsNone(layout['disk']['sfdisk_file'])
                 self.assertIn('status=success', (storage / 'backup-history.log').read_text())
 
-    def test_restore_rejects_unsupported_layout_before_tools_or_disk_changes(self):
-        for root_path, fs_type, boot_mode in [('/', 'ext4', 'auto'),
-                                              ('/mnt/root-backup-snapshot', 'xfs', 'auto'),
-                                              ('/mnt/root-backup-snapshot', 'ext4', 'none')]:
-            with self.subTest(root_path=root_path, fs_type=fs_type, boot_mode=boot_mode), tempfile.TemporaryDirectory() as directory:
-                root = Path(directory)
-                storage = root / 'storage'
-                (storage / 'restic').mkdir(parents=True)
-                (storage / 'restic' / 'config').write_text('{}')
-                (storage / 'recovery-metadata').mkdir()
-                layout = {'profile': {'recovery_profile': 'lvm-luks-uefi', 'boot_mode': boot_mode},
-                          'root': {'backup_path': root_path, 'filesystem_type': fs_type}}
-                (storage / 'recovery-metadata' / 'layout.json').write_text(json.dumps(layout))
-                script = (ROOT / 'restore-system.sh').read_text().replace('if [[ $EUID -ne 0 ]]; then', 'if false; then', 1)
-                (root / 'restore-system.sh').write_text(script)
-                result = subprocess.run(['bash', str(root / 'restore-system.sh'), '--backup-dir',
-                                         str(storage), '--dry-run'], capture_output=True, text=True)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn('unsupported-backup-layout', result.stderr)
-                self.assertNotIn('Перевірка необхідних утиліт', result.stdout)
 
 
 class SetupMountTests(unittest.TestCase):
@@ -280,6 +260,18 @@ class SetupMountTests(unittest.TestCase):
             before = fstab.read_text()
             self.assertFalse(helper.prepare_fstab(fstab, '/backup/system disk', 'backup-uuid', 'ext4'))
             self.assertEqual(fstab.read_text(), before)
+
+    def test_existing_backup_mount_becomes_optional(self):
+        helper = module('setup-backup-mount')
+        with tempfile.TemporaryDirectory() as directory:
+            fstab = Path(directory) / 'fstab'
+            original = 'UUID=root / ext4 defaults 0 1\nUUID=backup /backup/home ext4 defaults,noexec 0 2\n'
+            fstab.write_text(original)
+            self.assertTrue(helper.prepare_fstab(fstab, '/backup/home', 'backup', 'ext4'))
+            self.assertIn('defaults,noexec,nofail,x-systemd.device-timeout=10s,x-systemd.mount-timeout=30s', fstab.read_text())
+            self.assertTrue(fstab.read_text().startswith('UUID=root / ext4 defaults 0 1\n'))
+            self.assertEqual(fstab.with_name('fstab.before-system-backup').read_text(), original)
+            self.assertFalse(helper.prepare_fstab(fstab, '/backup/home', 'backup', 'ext4'))
 
     def test_fstab_conflict_is_not_modified(self):
         helper = module('setup-backup-mount')

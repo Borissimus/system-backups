@@ -8,11 +8,10 @@ import os
 from pathlib import Path
 import re
 import shutil
-import sys
 
 
 def prepare_fstab(filename: Path, mount: str, uuid: str, filesystem: str) -> bool:
-    """Return True only when an entry was added; never replace a conflicting one."""
+    """Return True when an entry was added or made optional; never replace a conflicting one."""
     if filesystem not in {'ext4', 'xfs', 'btrfs'}:
         raise ValueError(f'unsupported backup filesystem: {filesystem}')
     text = filename.read_text()
@@ -24,7 +23,8 @@ def prepare_fstab(filename: Path, mount: str, uuid: str, filesystem: str) -> boo
     def encode(value):
         return value.replace('\\', r'\134').replace(' ', r'\040')
 
-    for line in text.splitlines():
+    lines = text.splitlines(keepends=True)
+    for index, line in enumerate(lines):
         fields = line.split()
         if not fields or fields[0].startswith('#') or len(fields) < 3:
             continue
@@ -36,7 +36,24 @@ def prepare_fstab(filename: Path, mount: str, uuid: str, filesystem: str) -> boo
         )
         if not same_device or existing_fs != filesystem:
             raise ValueError(f'conflicting fstab entry for {mount}; review it manually')
-        return False
+        if len(fields) < 4:
+            raise ValueError(f'missing mount options for {mount}')
+        options = fields[3].split(',')
+        updated = [option for option in options if option not in {'fail', 'nofail'}
+                   and not option.startswith(('x-systemd.device-timeout=', 'x-systemd.mount-timeout='))]
+        updated += ['nofail', 'x-systemd.device-timeout=10s', 'x-systemd.mount-timeout=30s']
+        if set(options) == set(updated):
+            return False
+        fields[3] = ','.join(updated)
+        lines[index] = ' '.join(fields) + '\n'
+        backup = filename.with_name(filename.name + '.before-system-backup')
+        if not backup.exists():
+            shutil.copy2(filename, backup)
+        with filename.open('w') as stream:
+            stream.write(''.join(lines))
+            stream.flush()
+            os.fsync(stream.fileno())
+        return True
     backup = filename.with_name(filename.name + '.before-system-backup')
     if not backup.exists():
         shutil.copy2(filename, backup)
@@ -63,7 +80,7 @@ def main():
     try:
         config = helper.load(args.config)
         changed = prepare_fstab(Path('/etc/fstab'), config['backup_mount'], config['backup_disk_uuid'], args.filesystem)
-        print('Added backup mount to /etc/fstab.' if changed else 'Existing fstab entry matches; preserved.')
+        print('Added or updated optional backup mount in /etc/fstab.' if changed else 'Existing fstab entry matches; preserved.')
     except (OSError, ValueError) as exc:
         parser.exit(2, f'mount setup error: {exc}\n')
 

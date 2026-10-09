@@ -3,15 +3,17 @@
 Цей каталог — самодостатній комплект для backup системи через
 [restic](https://restic.net/). `backup-system.sh` підтримує LVM-on-LUKS і
 простіші root-схеми; для поточного, перевіреного LVM-on-LUKS UEFI профілю є
-процедура recovery в [RECOVERY.md](RECOVERY.md). Нижче — створення
+інструкція recovery в [RECOVERY.md](RECOVERY.md). Нижче — створення
 конфігів і запуск на новій машині. Деталі полів профілю — у
 [CONFIGURATION.md](CONFIGURATION.md), керування службою — у
 [AUTOMATION.md](AUTOMATION.md).
 
-Автоматичне відновлення підтримує LVM-on-LUKS/UEFI із LVM snapshot,
+Новий механізм відновлення підготовлений для Ubuntu x86_64, LVM-on-LUKS/UEFI із LVM snapshot,
 окремим `/boot` та ext4 для root/boot. Інші підтримувані схеми можна
 бекапити, але їх відновлення потребує окремої процедури. Окремий `/home`
-також відновлюється окремо через restic.
+також відновлюється окремо через restic. 2026-10-09 перевірено відновлення на фізичний диск
+із новими UUID/LUKS header і успішне завантаження ОС (dracut).
+Сценарії Live USB, original UUID та старий header ще не перевірені фізично.
 
 ## Зміст проєкту
 
@@ -27,7 +29,8 @@
 | `configs/service-config.example.jsonc` | Приклад JSON-параметрів systemd-служби без секретів |
 | `backup-history.log`       | Журнал історії запусків `backup-system.sh` (створюється автоматично) |
 | `.backup.lock`             | Lock-файл проти паралельних запусків (створюється автоматично) |
-| `.restore-progress` / `.restore-cache` | Службові файли `restore-system.sh` (resume/кеш) |
+| `.restore-state.json` | Журнал restore, прив’язаний до цілі та snapshot IDs |
+| `configs/restore-config.example.jsonc` | Restore-профіль: ціль, UUID/назви та LUKS header |
 
 Код і сховище можуть лежати окремо. `restic/`, `recovery-metadata/`, журнал,
 lock і стан відновлення створюються в `backup_dir`; без `--backup-dir` —
@@ -39,6 +42,24 @@ lock і стан відновлення створюються в `backup_dir`; 
 `/etc/system-backup/service.json`.
 
 ---
+
+## Відновлення на новий диск
+
+Створіть окремий restore-конфіг (після підключення нової цілі):
+
+```bash
+sudo bash restore-system.sh --interactive \
+  --backup-dir /backup/system/system-backups \
+  --config "$PWD/configs/restore-config.json"
+sudo bash restore-system.sh --config "$PWD/configs/restore-config.json" --dry-run
+```
+
+Для відновлення поруч із поточною системою виберіть `generate` для всіх
+ідентифікаторів. Defaults `original` підходять для заміни з від'єднаним
+оригіналом. Скрипт читає metadata узгодженого run зі сховища, перевіряє
+serial/UUID/VG конфлікти й перед стиранням вимагає підтвердження.
+Команди запуску, resume, обмеження та план першого тесту — у
+[RECOVERY.md](RECOVERY.md).
 
 ## 1. Що робить `backup-system.sh`
 
@@ -202,7 +223,8 @@ sudo bash scripts/setup-system-backup.sh --config "$PWD/configs/service-config.j
 
 1. Встановлює відсутні залежності через `apt-get` на Ubuntu/Debian.
 2. Перевіряє конфіги, пристрій і UUID backup-диска; додає запис у
-   `/etc/fstab`, якщо його немає, та монтує диск. Перед зміною створює
+   `/etc/fstab`, якщо його немає, та монтує диск. Наявний запис того самого диска
+   робить необов’язковим (`nofail`) із обмеженим часом очікування. Перед зміною створює
    `/etc/fstab.before-system-backup`; чужий запис для цього mount не змінює.
 3. Перевіряє вільне місце та план backup.
 4. Вимикає таймер на час налаштування, встановлює службові файли й
@@ -467,3 +489,9 @@ LV (десятки, не сотні GiB) — великий запас лиша�
 колись вільного місця стане критично мало (`< 6G`), скрипт явно впаде з
 поясненням, скільки саме бракує, а не мовчки створить замалий снепшот,
 який переповниться і зламає консистентність бекапу.
+
+Відсутність backup-диска не блокує завантаження ОС. Служба намагається
+запустити mount через `Wants`/`After`; якщо диск недоступний, wrapper
+повідомляє «Не вдалося створити бекап», завершується з помилкою і викликає
+OnFailure notice. Перевірки mount та UUID не дозволяють записати бекап
+у каталог на системному диску замість відсутнього сховища.

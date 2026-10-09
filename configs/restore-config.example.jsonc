@@ -1,0 +1,48 @@
+// Copy to configs/restore-config.jsonc and edit, or run restore-system.sh --interactive.
+// Full-line // comments only. No passwords are stored in this config.
+{
+  "schema_version": 1,
+  // Existing storage containing restic/. Metadata is retrieved from its snapshot,
+  // never trusted from the mutable local recovery-metadata/ directory.
+  "backup_dir": "/backup/system/system-backups",
+  // latest selects the latest complete root+boot+metadata run for one host.
+  // Or specify a particular run-YYYYMMDD-HHMMSS tag. Use backup_host if multiple hosts.
+  "backup_run": "latest",
+  "backup_host": "",
+  // Empty asks interactively unless Restic password environment is already set.
+  // On a Live USB this file may not exist; enter the repository password manually.
+  "restic_password_file": "",
+  "target": {
+    // New WHOLE disk, preferably a stable /dev/disk/by-id/... symlink.
+    // Empty values are filled by the interactive wizard. No automatic target choice.
+    "device": "",
+    // Exact serial reported by lsblk. Must match again before erasing the disk.
+    "serial": ""
+  },
+  "identifiers": {
+    // For each field: original (backup metadata), generate, or an explicit value.
+    // Default original is for replacement with the old disk DISCONNECTED.
+    // For restore beside the running system set all fields to generate.
+    // UUID collision checks include attached unmounted devices. VG/mapping names
+    // must not conflict either; changing only one filesystem UUID is insufficient.
+    "luks_uuid": "original",
+    "root_uuid": "original",
+    "boot_uuid": "original",
+    // FAT volume ID format: XXXX-XXXX (hex), not a standard 128-bit UUID.
+    "efi_uuid": "original",
+    "vg_name": "original",
+    "lv_name": "original",
+    "crypt_name": "original"
+  },
+  // new: create LUKS2 and prompt for a new passphrase, independent of the backup.
+  // restore: restore the backed-up header and keep its old passphrase/keyslots;
+  // the target LUKS UUID can still be changed after restoring the header.
+  "luks_header": "new",
+  // Space left in the VG is needed for future backup snapshots.
+  "root_lv_percent": 90,
+  // Install on the target ESP only, using --no-nvram and a fallback EFI loader.
+  // The firmware's existing boot entries are not changed during online restore.
+  "bootloader_id": "system-restored",
+  // Empty dedicated directory. No host backup-snapshot mount is reused.
+  "mount_dir": "/mnt/system-restore"
+}

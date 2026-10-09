@@ -37,7 +37,7 @@ done <<< "$config_values"
 : "${MIN_REPOSITORY_FREE_GIB:?MIN_REPOSITORY_FREE_GIB не задано}"
 : "${SUCCESS_CALLBACK:?SUCCESS_CALLBACK не задано}"
 
-mountpoint -q "$BACKUP_MOUNT" || fail "backup-диск не змонтовано у $BACKUP_MOUNT"
+mountpoint -q "$BACKUP_MOUNT" || fail "Не вдалося створити бекап: backup-диск не підключений або не змонтований у $BACKUP_MOUNT"
 mounted_source=$(findmnt -no SOURCE --target "$BACKUP_MOUNT") || fail "не вдалося визначити source mount $BACKUP_MOUNT"
 mounted_uuid=$(blkid -s UUID -o value "$mounted_source" 2>/dev/null || true)
 [[ "$mounted_uuid" == "$BACKUP_DISK_UUID" ]] || \

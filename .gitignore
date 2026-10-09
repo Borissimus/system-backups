@@ -1,6 +1,3 @@
-.restic-restore-tmp/
-.restore-cache
-.restore-progress
 recovery-metadata/
 restic/
 .backup.lock
@@ -13,3 +10,6 @@ __pycache__/
 # User configuration: only documented examples are versioned.
 configs/*
 !configs/*.example.jsonc
+
+.restore-state.json
+.restore-state.json.tmp

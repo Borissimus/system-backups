@@ -7,7 +7,6 @@ import importlib.util
 import json
 from pathlib import Path
 import subprocess
-import sys
 
 
 def helper(name):

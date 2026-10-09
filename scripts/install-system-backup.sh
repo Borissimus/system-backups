@@ -169,7 +169,7 @@ import sys
 print(sys.argv[1].replace('\\', '\\\\').replace('%', '%%').replace('"', '\\"'))
 PYUNIT
 )
-printf '[Unit]\nRequires=%s\nAfter=%s\n' "$mount_unit" "$mount_unit" \
+printf '[Unit]\nWants=%s\nAfter=%s\n' "$mount_unit" "$mount_unit" \
   > /etc/systemd/system/system-backup.service.d/config.conf
 printf '[Timer]\nOnCalendar=\nOnCalendar=*-*-* %s:00\n' "$schedule" \
   > /etc/systemd/system/system-backup.timer.d/config.conf
