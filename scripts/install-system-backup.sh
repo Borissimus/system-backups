@@ -51,33 +51,17 @@ install -m 0644 "$REPO_DIR/systemd/system-backup.service" /etc/systemd/system/sy
 install -m 0644 "$REPO_DIR/systemd/system-backup.timer" /etc/systemd/system/system-backup.timer
 install -m 0644 "$REPO_DIR/systemd/system-backup-failure.service" /etc/systemd/system/system-backup-failure.service
 
-# Keep the backup profile next to the backup code and repository. It contains
-# no password and is deliberately ignored by Git: each machine owns its
-# storage-layout decisions. The initial profile is safe auto-detection.
-if [[ -z "$SERVICE_CONFIG" && ! -e "$REPO_DIR/configs/user/backup-config.json" ]]; then
-  install -d -m 0755 "$REPO_DIR/configs/user"
-  python3 - "$REPO_DIR/configs/examples/backup-config.jsonc" "$REPO_DIR/configs/user/backup-config.json" <<'PYPROFILE'
-import json, sys
-from pathlib import Path
-lines = Path(sys.argv[1]).read_text().splitlines()
-profile = json.loads("\n".join(line for line in lines if not line.lstrip().startswith("//")))
-Path(sys.argv[2]).write_text(json.dumps(profile, indent=2) + "\n")
-PYPROFILE
-  chmod 0644 "$REPO_DIR/configs/user/backup-config.json"
-  echo "Created $REPO_DIR/configs/user/backup-config.json"
+# Local configs are installation inputs; the service uses private copies in /etc.
+if [[ -n "$SERVICE_CONFIG" ]]; then
+  CONFIG_SOURCE="$SERVICE_CONFIG"
+elif [[ -e "$CONFIG" ]]; then
+  CONFIG_SOURCE="$CONFIG"
+elif [[ -e "$REPO_SERVICE_CONFIG" ]]; then
+  CONFIG_SOURCE="$REPO_SERVICE_CONFIG"
 else
-  echo "Using backup profile from service configuration"
+  CONFIG_SOURCE="$CONFIG"
 fi
-
-if [[ -n "$SERVICE_CONFIG" && "$SERVICE_CONFIG" != "$CONFIG" ]]; then
-  install -m 0600 "$SERVICE_CONFIG" "$CONFIG"
-fi
-if [[ ! -e "$CONFIG" ]]; then
-  if [[ -e "$REPO_SERVICE_CONFIG" ]]; then
-    python3 "$LIB_DIR/service-config.py" validate --config "$REPO_SERVICE_CONFIG"
-    install -m 0600 "$REPO_SERVICE_CONFIG" "$CONFIG"
-    echo "Copied prepared $REPO_SERVICE_CONFIG to $CONFIG"
-  else
+if [[ "$CONFIG_SOURCE" == "$CONFIG" && ! -e "$CONFIG" ]]; then
     backup_mount=$(findmnt -no TARGET --target "$REPO_DIR") || {
       echo "Failed to detect backup repository mount for $REPO_DIR" >&2; exit 1;
     }
@@ -109,7 +93,7 @@ if [[ ! -e "$CONFIG" ]]; then
       callback="$(legacy_value SUCCESS_CALLBACK || true)"; callback="${callback:-/usr/local/lib/system-backup/after-success}"
       echo "Migrating settings from $LEGACY_CONFIG to JSON (old file preserved)."
     fi
-    python3 - "$CONFIG" "$REPO_DIR" "$backup_mount" "$backup_uuid" "$REPO_DIR/configs/user/backup-config.json" \
+    python3 - "$CONFIG" "$REPO_DIR" "$backup_mount" "$backup_uuid" "" \
       "$retention_daily" "$retention_weekly" "$retention_monthly" "$minimum_free" "$password_path" "$callback" "${SUDO_USER:-}" <<'PY'
 import json, sys
 (
@@ -135,10 +119,16 @@ with open(output, "w", encoding="utf-8") as f:
 PY
     chmod 0600 "$CONFIG"
     echo "Created $CONFIG"
-  fi
-else
-  echo "Preserving existing config $CONFIG"
 fi
+echo "Using service configuration input $CONFIG_SOURCE"
+
+# Install all backup runtime files; scheduled jobs never execute checkout code.
+install -d -m 0755 "$LIB_DIR/scripts"
+install -m 0755 "$REPO_DIR/backup-system.sh" "$LIB_DIR/backup-system.sh"
+install -m 0755 "$SCRIPT_DIR/backup-config.py" "$LIB_DIR/scripts/backup-config.py"
+install -m 0755 "$SCRIPT_DIR/service-config.py" "$LIB_DIR/scripts/service-config.py"
+python3 "$SCRIPT_DIR/install-service-config.py" --source "$CONFIG_SOURCE" \
+  --destination "$CONFIG" --runtime-dir "$LIB_DIR"
 
 # Systemd cannot read JSON itself. Generate mount dependencies and the
 # local schedule before ExecStart.

@@ -24,7 +24,14 @@ EOF
 
 command=${1:-}
 case "$command" in
-  install) shift; exec bash "$REPO_DIR/scripts/install-system-backup.sh" "$@" ;;
+  install)
+    shift
+    installer="$REPO_DIR/scripts/install-system-backup.sh"
+    [[ -f "$installer" ]] || {
+      echo "Run scripts/install-system-backup.sh from a project checkout to install updates." >&2
+      exit 2
+    }
+    exec bash "$installer" "$@" ;;
   enable) sudo systemctl enable --now system-backup.timer ;;
   disable) sudo systemctl disable --now system-backup.timer ;;
   run) sudo systemctl start system-backup.service ;;

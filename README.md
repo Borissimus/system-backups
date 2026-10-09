@@ -36,7 +36,9 @@ sudo bash scripts/setup-system-backup.sh \
 ```
 
 Setup installs missing dependencies, prepares the service and repository,
-runs the first backup, and enables the timer only after success. Add
+copies runtime and configs into `/usr/local/lib/system-backup` and
+`/etc/system-backup`, runs the first backup, and enables the timer only after
+success. Scheduled backups do not depend on the checkout. Add
 `--no-enable` to leave the timer disabled. User configs in `configs/user/` are
 ignored by Git; annotated `*.jsonc` files are provided in `configs/examples/`. Python uses
 only the standard library, with no virtual environment or pip packages required.

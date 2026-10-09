@@ -223,8 +223,10 @@ This is the primary installation method. It:
    with bounded timeouts. It saves `/etc/fstab.before-system-backup` before
    changing fstab and refuses to replace conflicting entries.
 3. Checks free space and the backup plan.
-4. Disables the timer during setup, installs service files and a root-only
-   password file, and prompts for a password if none exists.
+4. Disables the timer during setup and installs runtime files under
+   `/usr/local/lib/system-backup`, the service config and effective backup
+   profile under `/etc/system-backup`, and a root-only password file. It
+   prompts for a password if none exists.
 5. Initializes a new restic repository or preserves an existing one. A
    nonempty directory without restic `config` requires manual inspection.
 6. Runs `--dry-run`, the first service backup, and checks for a newly recorded
@@ -349,9 +351,11 @@ reviewing a previous failure notice, remove it with
 
 ### 3.8 Editing configuration files
 
-The profile at `backup_profile` is loaded on every run. After editing
-`backup-config.json`, validate it and run `--print-plan`. Without `--config`,
-the script uses built-in `auto` defaults even if a local config exists.
+The service reads its installed `/etc/system-backup/backup.json` on every run.
+Local profiles in `configs/user/` are installation inputs. After editing a
+local profile, validate it, inspect `--print-plan`, and reinstall with the
+local service config to copy the changes into `/etc`. Without `--config`,
+a direct manual backup uses built-in `auto` defaults even if a local config exists.
 
 Apply an edited local service config explicitly:
 
@@ -370,8 +374,11 @@ sudo bash scripts/install-system-backup.sh
 ```
 
 Installation without `--enable` does not enable a new timer; an already
-enabled timer stays enabled. Code and profile files must remain available
-at the configured paths.
+enabled timer stays enabled. Installed backups use their runtime under
+`/usr/local/lib/system-backup` and private configs under `/etc/system-backup`.
+The checkout and local user configs can be moved after installation.
+Custom password files and custom success callbacks must remain available at
+their configured paths.
 
 ### Environment variables
 
@@ -479,3 +486,32 @@ Missing backup disks do not block OS startup when their fstab entries use
 the wrapper reports that the backup could not be created, fails, and triggers
 the failure notice. Mount and UUID checks prevent writing into the system
 disk directory in place of the missing repository.
+
+### Migrating an existing installed service
+
+To update runtime files and migrate a checkout profile reference while
+preserving active settings and the repository password:
+
+```bash
+sudo bash scripts/install-system-backup.sh
+sudo python3 - <<'PY'
+import json
+from pathlib import Path
+config = json.loads(Path('/etc/system-backup/service.json').read_text())
+print('code_dir:', config['code_dir'])
+print('backup_profile:', config['backup_profile'])
+PY
+systemctl cat system-backup.service
+```
+
+Expect `/usr/local/lib/system-backup`, `/etc/system-backup/backup.json`, and
+`Wants=backup-system.mount` for the example mount. Installation does not run
+a backup. Only after verifying the active paths may you remove old local
+`backup-config.json` symlinks. Reinstallation without `--config` preserves
+installed profile edits; passing a local service config explicitly reapplies
+that config and its referenced profile.
+
+If an older installed config references a missing `backup-config.json` in the
+checkout root or directly under `configs/`, the installer checks its relocated
+counterpart under `configs/user/`. This migration is limited to known old paths;
+unrelated missing profiles still fail instead of falling back to defaults.

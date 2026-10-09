@@ -95,8 +95,11 @@ To update only service files, use `scripts/install-system-backup.sh`.
 `--config FILE` applies that service config even during reinstallation.
 Without `--config`, the installed `/etc` config is preserved. A new timer is
 not enabled automatically; an already enabled timer is not disabled. The
-profile remains at `backup_profile`, so that file and `code_dir` must remain
-accessible to the service.
+installer copies the effective profile to `/etc/system-backup/backup.json`
+(mode 0600) and the backup runtime to `/usr/local/lib/system-backup`.
+The installed service config uses these paths; scheduled backups do not
+read profiles or execute code from the checkout. Editing a local profile
+requires reinstalling with `--config FILE`.
 
 ## `backup-config.json`
 
@@ -193,10 +196,12 @@ Important fields:
 - `backup_mount` and `backup_disk_uuid`: the service verifies that the expected
   disk is mounted, preventing writes into an empty local directory.
 - `backup_dir`: backup storage directory within that mount.
-- `code_dir`: code directory; defaults to `backup_dir` for compatibility with
-  earlier configs.
-- `backup_profile`: path to `backup-config.json`; an empty string uses the
-  built-in safe `auto` defaults.
+- `code_dir`: source code directory for setup checks; defaults to `backup_dir`
+  in older configs. Installation sets the active value to
+  `/usr/local/lib/system-backup`; updates come from the installer checkout.
+- `backup_profile`: input profile path. Installation copies its effective
+  settings into `/etc/system-backup/backup.json` and stores that path in the
+  active service config. An empty input installs built-in safe `auto` defaults.
 - `schedule`: local time in `HH:MM` format.
 - `retention`: daily, weekly, and monthly snapshot counts.
 - `min_repository_free_gib`: minimum free space required before backup starts.
@@ -211,8 +216,10 @@ system-backupctl timer
 Before initial installation, you can prepare an ignored local
 `configs/user/service-config.json` in `configs/user/`. The installer validates and
 copies it to `/etc/system-backup/service.json`. After installation, the `/etc`
-file is the active copy. Reinstallation preserves it and the password but
-regenerates mount dependencies (`Wants`/`After`) and the timer schedule. The
+file is the active copy. Reinstallation without `--config` preserves its
+settings and installed profile, migrates old checkout references to installed
+paths, and updates runtime files. It preserves the password and regenerates
+mount dependencies (`Wants`/`After`) and the timer schedule. The
 backup disk must still have a UUID-based `fstab` entry with `nofail`.
 
 Do not use the example unchanged: replace every `USER`, mount path, and

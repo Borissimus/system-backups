@@ -5,6 +5,8 @@ set -euo pipefail
 
 CONFIG=/etc/system-backup/service.json
 CONFIG_HELPER=/usr/local/lib/system-backup/service-config.py
+RUNTIME_DIR=/usr/local/lib/system-backup
+INSTALLED_PROFILE=/etc/system-backup/backup.json
 STATE_DIR=/var/lib/system-backup
 CACHE_DIR=/var/cache/system-backup/restic
 
@@ -37,6 +39,9 @@ done <<< "$config_values"
 : "${MIN_REPOSITORY_FREE_GIB:?MIN_REPOSITORY_FREE_GIB is not set}"
 : "${SUCCESS_CALLBACK:?SUCCESS_CALLBACK is not set}"
 
+[[ "$BACKUP_PROFILE" == "$INSTALLED_PROFILE" ]] || \
+  fail "backup profile must be installed at $INSTALLED_PROFILE; rerun the installer"
+
 mountpoint -q "$BACKUP_MOUNT" || fail "Could not create backup: backup disk is disconnected or not mounted at $BACKUP_MOUNT"
 mounted_source=$(findmnt -no SOURCE --target "$BACKUP_MOUNT") || fail "failed to detect mount source for $BACKUP_MOUNT"
 mounted_uuid=$(blkid -s UUID -o value "$mounted_source" 2>/dev/null || true)
@@ -45,7 +50,7 @@ mounted_uuid=$(blkid -s UUID -o value "$mounted_source" 2>/dev/null || true)
 backup_mount_actual=$(findmnt -no TARGET --target "$BACKUP_DIR" 2>/dev/null || true)
 [[ "$backup_mount_actual" == "$BACKUP_MOUNT" ]] || \
   fail "BACKUP_DIR=$BACKUP_DIR is not on the expected mount $BACKUP_MOUNT"
-[[ -x "$CODE_DIR/backup-system.sh" ]] || fail "$CODE_DIR/backup-system.sh not found"
+[[ -x "$RUNTIME_DIR/backup-system.sh" ]] || fail "$RUNTIME_DIR/backup-system.sh not found"
 [[ -d "$BACKUP_DIR/restic" && -f "$BACKUP_DIR/restic/config" ]] || \
   fail "Restic repository unavailable at $BACKUP_DIR/restic (backup disk not mounted?)"
 [[ -r "$RESTIC_PASSWORD_FILE" ]] || fail "password file unavailable: $RESTIC_PASSWORD_FILE"
@@ -71,7 +76,7 @@ if [[ -n "$BACKUP_PROFILE" ]]; then
   [[ -r "$BACKUP_PROFILE" ]] || fail "backup profile unavailable: $BACKUP_PROFILE"
   backup_args+=(--config "$BACKUP_PROFILE")
 fi
-"$CODE_DIR/backup-system.sh" "${backup_args[@]}"
+"$RUNTIME_DIR/backup-system.sh" "${backup_args[@]}"
 
 # backup-system.sh intentionally returns 0 for a concurrent-run skip. Only a
 # recorded success is allowed to invoke the callback; a skip must never lead

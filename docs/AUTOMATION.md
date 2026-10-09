@@ -8,7 +8,8 @@ will be added only after separate hardware wakeup tests.
 
 ## Components
 
-- `system-backup.service` runs `backup-system.sh --prune` as root.
+- `system-backup.service` runs the installed
+  `/usr/local/lib/system-backup/backup-system.sh --prune` as root.
 - `system-backup.timer` uses the time configured in `service.json` and does
   not catch up on missed runs.
 - `system-backup-failure.service` creates `/var/lib/system-backup/failure-notice`.
@@ -85,3 +86,16 @@ The installer generates `Wants` and `After` for the mount unit derived from
 The service attempts to mount a disk connected after boot before starting
 the backup. If the disk is missing, the wrapper fails and creates the usual
 failure notice rather than writing into an empty directory on the system disk.
+
+## Installed runtime and configuration
+
+Installation copies runtime files to `/usr/local/lib/system-backup`, service
+settings to `/etc/system-backup/service.json`, and the effective backup profile
+to `/etc/system-backup/backup.json`. Both JSON files are mode 0600. The service
+runs independently of the source checkout and `configs/user/` files.
+
+To apply local profile changes, rerun the installer from the checkout with
+`--config "$PWD/configs/user/service-config.json"`. Without `--config`, it
+preserves active settings and the installed profile while updating runtime.
+The installed `system-backupctl` can control runs, timers, logs, and notices;
+installing updates requires running the installer from a checkout.

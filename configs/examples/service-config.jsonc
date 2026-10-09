@@ -4,8 +4,8 @@
 // Only // comments on their own lines are supported. No inline/block comments.
 {
   "schema_version": 1,
-  // Absolute path to this project's code; it need not be on the backup disk.
-  // If omitted, old configs use backup_dir as the code directory.
+  // Source code directory for setup checks; it need not be on the backup disk.
+  // Installation sets the active copy to /usr/local/lib/system-backup.
   "code_dir": "/home/USER/software_projects/system-backups",
   // Storage directory inside backup_mount. Contains restic/, metadata and history.
   "backup_dir": "/backup/system/system-backups",
@@ -15,8 +15,9 @@
   // Filesystem UUID from lsblk -o NAME,FSTYPE,UUID,MOUNTPOINTS.
   // Checked before each backup to reject a wrong disk or an empty mount directory.
   "backup_disk_uuid": "PUT-BACKUP-DISK-UUID-HERE",
-  // Absolute path to your profile. It is read anew at every backup.
-  // An empty string selects built-in auto defaults, not a local config file.
+  // Input profile copied into /etc/system-backup/backup.json at installation.
+  // Local edits take effect only after reinstalling with this service config.
+  // An empty string installs the built-in auto defaults.
   "backup_profile": "/home/USER/software_projects/system-backups/configs/user/backup-config.jsonc",
   // Local HH:MM, 24-hour format. Missed runs are not caught up after boot.
   "schedule": "20:00",

@@ -9,7 +9,7 @@
 # and push root + /boot + fresh recovery metadata to restic in one run.
 #
 #   sudo bash backup-system.sh --dry-run                 # validate only
-#   sudo bash backup-system.sh --config backup-config.json
+#   sudo bash backup-system.sh --config configs/user/backup-config.json
 #   sudo bash backup-system.sh --print-plan               # no repository write
 #   sudo bash backup-system.sh --prune                    # apply retention
 #   Add --backup-dir /mnt/backup/system-backups for storage separate from code.
